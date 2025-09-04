@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Generator - Создание видео из изображений</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 Video Generator</h1>
+            <p>Создавайте видео из изображений с временными метками и аудиодорожкой</p>
+        </header>
+
+        <main>
+            <!-- Project Creation Section -->
+            <section class="project-section">
+                <h2>Создать новый проект</h2>
+                <div class="project-controls">
+                    <input type="text" id="projectName" placeholder="Название проекта" class="input-field">
+                    <button id="createProject" class="btn btn-primary">Создать проект</button>
+                    <label for="importProject" class="btn btn-secondary" style="cursor:pointer; margin-left:8px;">
+                        📂 Загрузить проект
+                    </label>
+                    <input type="file" id="importProject" accept="application/json" style="display:none;">
+                </div>
+                <div id="currentProject" class="current-project" style="display: none;">
+                    <h3>Текущий проект: <span id="projectTitle"></span></h3>
+                    <div class="project-io" style="display:flex; gap:12px; flex-wrap:wrap;">
+                        <button id="saveProject" class="btn btn-secondary">💾 Сохранить проект</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Audio Upload Section (moved above images) -->
+            <section class="audio-section">
+                <h2>Добавить аудиодорожку</h2>
+                <div class="audio-upload">
+                    <input type="file" id="audioUpload" accept="audio/*" class="file-input">
+                    <label for="audioUpload" class="upload-label">
+                        <div class="upload-icon">🎵</div>
+                        <p>Выберите аудиофайл</p>
+                    </label>
+                </div>
+                <div id="audioPlayer" class="audio-player" style="display: none;">
+                    <audio controls id="audioElement"></audio>
+                    <p id="audioFileName"></p>
+                </div>
+            </section>
+
+            <!-- Image Upload Section -->
+            <section class="upload-section">
+                <h2>Добавить изображения</h2>
+                <div class="upload-area">
+                    <input type="file" id="imageUpload" multiple accept="image/*" class="file-input">
+                    <label for="imageUpload" class="upload-label">
+                        <div class="upload-icon">📁</div>
+                        <p>Выберите изображения или перетащите их сюда</p>
+                    </label>
+                </div>
+                <div id="imageList" class="image-list"></div>
+            </section>
+
+            <!-- Subtitles Section -->
+            <section class="subtitles-section">
+                <h2>Титры</h2>
+                <div class="subtitles-controls" style="display:flex; flex-direction:column; gap:12px; align-items:stretch;">
+                    <div class="control">
+                        <label for="subtitleText">Текст:</label>
+                        <input type="text" id="subtitleText" class="input-field" placeholder="Введите текст титров">
+                    </div>
+                    <div class="control">
+                        <label for="subtitleStart">Начало (MM:SS):</label>
+                        <input type="text" id="subtitleStart" class="input-field" placeholder="00:05" pattern="[0-9]{1,2}:[0-9]{2}">
+                    </div>
+                    <div class="control">
+                        <label for="subtitleDuration">Длительность (сек):</label>
+                        <input type="number" id="subtitleDuration" class="input-field" min="1" max="300" value="5">
+                    </div>
+                    <button id="addSubtitle" class="btn btn-secondary">Добавить титр</button>
+                </div>
+                <div id="subtitleList" class="subtitle-list" style="margin-top:12px;"></div>
+            </section>
+
+            <!-- Timeline Section -->
+            <section class="timeline-section">
+                <h2>Временная шкала</h2>
+                <div class="timeline-controls">
+                    <label>Длительность видео (сек): 
+                        <input type="number" id="videoDuration" value="30" min="1" max="300" class="input-field">
+                    </label>
+                    <div class="time-format-info">
+                        <small>💡 Временные метки указываются в формате <strong>MM:SS</strong> (например: 01:30)</small>
+                    </div>
+                </div>
+                <div id="timeline" class="timeline"></div>
+            </section>
+
+            <!-- Video Generation Section -->
+            <section class="generation-section">
+                <h2>Генерация видео</h2>
+                <div class="video-settings">
+                    <div class="setting-group">
+                        <label>Разрешение:</label>
+                        <select id="videoResolution" class="select-field">
+                            <option value="1920x1080">1920x1080 (Full HD)</option>
+                            <option value="1280x720">1280x720 (HD)</option>
+                            <option value="854x480">854x480 (SD)</option>
+                            <option value="640x360">640x360 (360p) - Быстрый тест</option>
+                            <option value="426x240">426x240 (240p) - Очень быстро</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>FPS:</label>
+                        <select id="videoFPS" class="select-field">
+                            <option value="30">30 FPS</option>
+                            <option value="24">24 FPS</option>
+                            <option value="60">60 FPS</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>Эффект видео:</label>
+                        <select id="videoEffect" class="select-field">
+                            <option value="none">Без эффекта</option>
+                            <option value="film">Старая пленка</option>
+                            <option value="film_marks">Пленка (кружки/стрелки)</option>
+                            <option value="rain">Дождь</option>
+                            <option value="clouds">Облака</option>
+                            <option value="fireworks">Салют</option>
+                            <option value="stars">Плывущие звезды</option>
+                            <option value="galaxy">Звездное небо (галактика)</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label for="effectIntensity">Насыщенность эффекта:</label>
+                        <input id="effectIntensity" type="range" min="0" max="100" value="50" class="seeker">
+                    </div>
+                    <div class="setting-group" style="flex:1 1 100%;">
+                        <label for="copyrightText">Текст копирайта (необязательно):</label>
+                        <input id="copyrightText" type="text" class="input-field" placeholder="© 2025 Ваше имя / бренд">
+                    </div>
+                </div>
+                <button id="generateVideo" class="btn btn-generate" disabled>
+                    <span class="btn-text">Генерировать видео</span>
+                    <div class="loading-spinner" style="display: none;"></div>
+                </button>
+                <div id="progress" class="progress-container" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p class="progress-text">Генерация видео: <span id="progressPercent">0%</span></p>
+                </div>
+            </section>
+
+            <!-- Preview Section -->
+            <section class="preview-section">
+                <h2>Предварительный просмотр</h2>
+                <div id="previewContainer" class="preview-container">
+                    <canvas id="previewCanvas" width="640" height="360"></canvas>
+                    <div class="preview-controls">
+                        <button id="playPreview" class="btn btn-secondary">▶ Воспроизвести</button>
+                        <button id="pausePreview" class="btn btn-secondary">⏸ Пауза</button>
+                        <div class="time-display">
+                            <span id="currentTime">00:00</span> / <span id="totalTime">00:00</span>
+                        </div>
+                        <input type="range" id="previewSeeker" min="0" max="100" value="0" class="seeker">
+                    </div>
+                </div>
+            </section>
+
+            <!-- Result Section -->
+            <section class="result-section" style="display: none;">
+                <h2>Готовое видео</h2>
+                <div id="videoResult" class="video-result">
+                    <video id="resultVideo" controls width="640" height="360"></video>
+                    <div class="result-actions">
+                        <button id="downloadVideo" class="btn btn-success">⬇ Скачать видео</button>
+                        <button id="createNewProject" class="btn btn-secondary">Создать новый проект</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
