@@ -2,7 +2,7 @@
 class VideoGenerator {
     constructor() {
         this.currentProject = null;
-        this.images = [];
+        this.mediaItems = []; // Changed from images to mediaItems to support both images and videos
         this.subtitles = [];
         this.audioFile = null;
         this.videoDuration = 30;
@@ -14,6 +14,7 @@ class VideoGenerator {
         this.previewCurrentTime = 0;
         this.canvas = null;
         this.ctx = null;
+        this.videoFrameCache = new Map(); // Cache for extracted video frames
         
         this.initializeElements();
         this.bindEvents();
@@ -1298,8 +1299,8 @@ class VideoGenerator {
             projectTitle: document.getElementById('projectTitle'),
             saveProject: document.getElementById('saveProject'),
             importProject: document.getElementById('importProject'),
-            imageUpload: document.getElementById('imageUpload'),
-            imageList: document.getElementById('imageList'),
+            mediaUpload: document.getElementById('mediaUpload'),
+            mediaList: document.getElementById('mediaList'),
             audioUpload: document.getElementById('audioUpload'),
             audioPlayer: document.getElementById('audioPlayer'),
             audioElement: document.getElementById('audioElement'),
@@ -1345,8 +1346,8 @@ class VideoGenerator {
         if (this.elements.saveProject) this.elements.saveProject.addEventListener('click', () => this.saveProject());
         if (this.elements.importProject) this.elements.importProject.addEventListener('change', (e) => this.loadProjectFromFile(e));
 
-        // Image upload
-        this.elements.imageUpload.addEventListener('change', (e) => this.handleImageUpload(e));
+        // Media upload (images and videos)
+        this.elements.mediaUpload.addEventListener('change', (e) => this.handleMediaUpload(e));
         this.setupDragAndDrop();
 
         // Audio upload
@@ -1362,14 +1363,14 @@ class VideoGenerator {
             this.videoDuration = parseInt(e.target.value);
             this.updateTimeline();
             this.updateTimeDisplay();
-            // Update all image timestamps that exceed new duration
-            this.images.forEach(image => {
-                if (image.timestamp > this.videoDuration) {
-                    image.timestamp = Math.min(image.timestamp, this.videoDuration);
-                    image.timestampDisplay = this.formatTime(image.timestamp);
+            // Update all media timestamps that exceed new duration
+            this.mediaItems.forEach(item => {
+                if (item.timestamp > this.videoDuration) {
+                    item.timestamp = Math.min(item.timestamp, this.videoDuration);
+                    item.timestampDisplay = this.formatTime(item.timestamp);
                 }
             });
-            this.renderImageList();
+            this.renderMediaList();
             this.onSettingsChanged();
         });
         // React to resolution/fps changes to allow re-generation and update preview canvas size
@@ -1439,8 +1440,10 @@ class VideoGenerator {
 
     handleDrop(e) {
         const files = Array.from(e.dataTransfer.files);
-        const imageFiles = files.filter(file => file.type.startsWith('image/'));
-        this.processImageFiles(imageFiles);
+        const mediaFiles = files.filter(file => 
+            file.type.startsWith('image/') || file.type.startsWith('video/')
+        );
+        this.processMediaFiles(mediaFiles);
     }
 
     createProject() {
@@ -1461,36 +1464,48 @@ class VideoGenerator {
         this.showNotification('Проект создан успешно!', 'success');
     }
 
-    handleImageUpload(e) {
+    handleMediaUpload(e) {
         const files = Array.from(e.target.files);
-        this.processImageFiles(files);
+        this.processMediaFiles(files);
     }
 
-    processImageFiles(files) {
+    async processMediaFiles(files) {
         // Auto-create project on first asset import
         this.ensureProjectExists();
 
-        files.forEach(file => {
+        for (const file of files) {
+            if (file.type.startsWith('image/')) {
+                await this.processImageFile(file);
+            } else if (file.type.startsWith('video/')) {
+                await this.processVideoFile(file);
+            }
+        }
+    }
+
+    async processImageFile(file) {
+        return new Promise((resolve) => {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const img = new Image();
                 img.onload = () => {
-                    const defaultTime = Math.min(this.images.length * 2, this.videoDuration);
+                    const defaultTime = this.getNextAvailableTimestamp();
                     const imageData = {
                         id: Date.now() + Math.random(),
                         name: file.name,
                         src: e.target.result,
-                        timestamp: defaultTime, // Default 2 seconds apart, but not exceeding video duration
-                        timestampDisplay: this.formatTime(defaultTime), // MM:SS format
+                        type: 'image',
+                        timestamp: defaultTime,
+                        timestampDisplay: this.formatTime(defaultTime),
                         element: img,
                         width: img.naturalWidth,
                         height: img.naturalHeight
                     };
                     
-                    this.images.push(imageData);
-                    this.renderImageList();
+                    this.mediaItems.push(imageData);
+                    this.renderMediaList();
                     this.updateTimeline();
                     this.updateGenerateButton();
+                    resolve();
                 };
                 img.src = e.target.result;
             };
@@ -1498,43 +1513,160 @@ class VideoGenerator {
         });
     }
 
-    renderImageList() {
-        this.elements.imageList.innerHTML = '';
-        
-        // Sort images by timestamp before rendering
-        const sortedImages = [...this.images].sort((a, b) => a.timestamp - b.timestamp);
-        
-        sortedImages.forEach((image, index) => {
-            const imageItem = document.createElement('div');
-            imageItem.className = 'image-item fade-in';
+    async processVideoFile(file) {
+        return new Promise((resolve) => {
+            const video = document.createElement('video');
+            const url = URL.createObjectURL(file);
             
-            imageItem.innerHTML = `
-                <img src="${image.src}" alt="${image.name}" class="image-preview">
-                <div class="image-info">
-                    <div class="image-name">${image.name}</div>
+            video.addEventListener('loadedmetadata', async () => {
+                const videoDuration = video.duration;
+                const startTime = this.getNextAvailableTimestamp();
+                
+                // Create video data object
+                const videoData = {
+                    id: Date.now() + Math.random(),
+                    name: file.name,
+                    src: url,
+                    type: 'video',
+                    timestamp: startTime,
+                    timestampDisplay: this.formatTime(startTime),
+                    duration: videoDuration,
+                    element: video,
+                    width: video.videoWidth,
+                    height: video.videoHeight,
+                    file: file
+                };
+                
+                // Extract frames for preview and processing
+                await this.extractVideoFrames(videoData);
+                
+                this.mediaItems.push(videoData);
+                this.renderMediaList();
+                this.updateTimeline();
+                this.updateGenerateButton();
+                
+                this.showNotification(`Видео "${file.name}" загружено (${this.formatTime(videoDuration)})`, 'success');
+                resolve();
+            });
+            
+            video.addEventListener('error', () => {
+                this.showNotification(`Ошибка загрузки видео "${file.name}"`, 'error');
+                URL.revokeObjectURL(url);
+                resolve();
+            });
+            
+            video.src = url;
+        });
+    }
+
+    getNextAvailableTimestamp() {
+        if (this.mediaItems.length === 0) return 0;
+        
+        // Find the latest timestamp + duration
+        let maxEndTime = 0;
+        this.mediaItems.forEach(item => {
+            const endTime = item.timestamp + (item.duration || 2); // Default 2 seconds for images
+            if (endTime > maxEndTime) {
+                maxEndTime = endTime;
+            }
+        });
+        
+        return Math.min(maxEndTime, this.videoDuration);
+    }
+
+    async extractVideoFrames(videoData) {
+        const video = videoData.element;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size to video dimensions
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Extract frames at key intervals (every 0.5 seconds)
+        const frameInterval = 0.5;
+        const totalFrames = Math.ceil(videoData.duration / frameInterval);
+        const frames = [];
+        
+        for (let i = 0; i < totalFrames; i++) {
+            const time = i * frameInterval;
+            if (time >= videoData.duration) break;
+            
+            video.currentTime = time;
+            await new Promise(resolve => {
+                video.addEventListener('seeked', () => resolve(), { once: true });
+            });
+            
+            // Draw frame to canvas and extract as image
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const frameDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            
+            frames.push({
+                time: time,
+                dataUrl: frameDataUrl
+            });
+        }
+        
+        // Cache frames for this video
+        this.videoFrameCache.set(videoData.id, frames);
+        
+        // Set preview frame (first frame)
+        if (frames.length > 0) {
+            videoData.previewFrame = frames[0].dataUrl;
+        }
+    }
+
+    renderMediaList() {
+        this.elements.mediaList.innerHTML = '';
+        
+        // Sort media items by timestamp before rendering
+        const sortedItems = [...this.mediaItems].sort((a, b) => a.timestamp - b.timestamp);
+        
+        sortedItems.forEach((item, index) => {
+            const mediaItem = document.createElement('div');
+            mediaItem.className = 'media-item fade-in';
+            
+            // Different display for images vs videos
+            let previewHtml = '';
+            let typeIcon = '';
+            let durationInfo = '';
+            
+            if (item.type === 'image') {
+                previewHtml = `<img src="${item.src}" alt="${item.name}" class="media-preview">`;
+                typeIcon = '🖼️';
+            } else if (item.type === 'video') {
+                previewHtml = `<img src="${item.previewFrame || item.src}" alt="${item.name}" class="media-preview">`;
+                typeIcon = '🎬';
+                durationInfo = `<span class="duration-info">${this.formatTime(item.duration)}</span>`;
+            }
+            
+            mediaItem.innerHTML = `
+                ${previewHtml}
+                <div class="media-info">
+                    <div class="media-name">${typeIcon} ${item.name} ${durationInfo}</div>
                     <input type="text" 
                            class="timestamp-input" 
-                           value="${this.formatTime(image.timestamp)}" 
+                           value="${this.formatTime(item.timestamp)}" 
                            placeholder="MM:SS"
                            pattern="[0-9]{1,2}:[0-9]{2}"
                            title="Формат: MM:SS (например, 01:30)">
-                    <button class="remove-image" onclick="videoGen.removeImage('${image.id}')">
+                    <button class="remove-media" onclick="videoGen.removeMediaItem('${item.id}')">
                         Удалить
                     </button>
                 </div>
             `;
             
-            const timestampInput = imageItem.querySelector('.timestamp-input');
+            const timestampInput = mediaItem.querySelector('.timestamp-input');
             timestampInput.addEventListener('change', (e) => {
                 const newTime = this.parseTime(e.target.value);
                 if (newTime <= this.videoDuration) {
-                    image.timestamp = newTime;
-                    image.timestampDisplay = this.formatTime(newTime);
+                    item.timestamp = newTime;
+                    item.timestampDisplay = this.formatTime(newTime);
                     e.target.value = this.formatTime(newTime); // Normalize display
                     this.updateTimeline();
-                    this.renderImageList(); // Re-render list to show sorted order
+                    this.renderMediaList(); // Re-render list to show sorted order
                 } else {
-                    e.target.value = this.formatTime(image.timestamp); // Revert to previous value
+                    e.target.value = this.formatTime(item.timestamp); // Revert to previous value
                     this.showNotification(`Время не может превышать ${this.formatTime(this.videoDuration)}`, 'warning');
                 }
             });
@@ -1545,15 +1677,25 @@ class VideoGenerator {
                 e.target.value = this.formatTime(time);
             });
             
-            this.elements.imageList.appendChild(imageItem);
+            this.elements.mediaList.appendChild(mediaItem);
         });
     }
 
-    removeImage(imageId) {
-        const index = this.images.findIndex(img => img.id === imageId);
+    removeMediaItem(itemId) {
+        const index = this.mediaItems.findIndex(item => item.id === itemId);
         if (index !== -1) {
-            this.images.splice(index, 1);
-            this.renderImageList();
+            const item = this.mediaItems[index];
+            
+            // Clean up video resources
+            if (item.type === 'video') {
+                this.videoFrameCache.delete(itemId);
+                if (item.src && item.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(item.src);
+                }
+            }
+            
+            this.mediaItems.splice(index, 1);
+            this.renderMediaList();
             this.updateTimeline();
             this.renderSubtitleList();
             this.updateGenerateButton();
@@ -1579,11 +1721,11 @@ class VideoGenerator {
             this.videoDuration = audioDuration;
             this.elements.videoDuration.value = audioDuration;
             
-            // Обновляем временные метки изображений, если они превышают новую длительность
-            this.images.forEach(image => {
-                if (image.timestamp > this.videoDuration) {
-                    image.timestamp = Math.min(image.timestamp, this.videoDuration);
-                    image.timestampDisplay = this.formatTime(image.timestamp);
+            // Обновляем временные метки медиа, если они превышают новую длительность
+            this.mediaItems.forEach(item => {
+                if (item.timestamp > this.videoDuration) {
+                    item.timestamp = Math.min(item.timestamp, this.videoDuration);
+                    item.timestampDisplay = this.formatTime(item.timestamp);
                 }
             });
             // Обновляем титры, если их начало выходит за пределы длительности
@@ -1598,7 +1740,7 @@ class VideoGenerator {
             });
             
             this.updateTimeline();
-            this.renderImageList();
+            this.renderMediaList();
             this.renderSubtitleList();
             this.showNotification(`Длительность видео установлена по аудио: ${this.formatTime(audioDuration)}`, 'success');
         });
@@ -1610,18 +1752,23 @@ class VideoGenerator {
     updateTimeline() {
         this.updateTimeDisplay();
         
-        if (this.images.length === 0) {
-            this.elements.timeline.innerHTML = '<p style="text-align: center; color: #718096;">Добавьте изображения для отображения временной шкалы</p>';
+        if (this.mediaItems.length === 0) {
+            this.elements.timeline.innerHTML = '<p style="text-align: center; color: #718096;">Добавьте изображения или видео для отображения временной шкалы</p>';
             return;
         }
 
         const timelineHTML = `
             <div class="timeline-track">
-                ${this.images.map(image => {
-                    const position = (image.timestamp / this.videoDuration) * 100;
+                ${this.mediaItems.map(item => {
+                    const position = (item.timestamp / this.videoDuration) * 100;
+                    const width = item.type === 'video' ? Math.min((item.duration / this.videoDuration) * 100, 100 - position) : 2;
+                    const previewSrc = item.type === 'video' ? (item.previewFrame || item.src) : item.src;
+                    const typeIcon = item.type === 'video' ? '🎬' : '🖼️';
+                    
                     return `
-                        <div class="timeline-marker" style="left: ${position}%">
-                            <img src="${image.src}" class="timeline-image" alt="${image.name}">
+                        <div class="timeline-marker ${item.type}" style="left: ${position}%; width: ${width}%;">
+                            <img src="${previewSrc}" class="timeline-image" alt="${item.name}">
+                            <span class="timeline-icon">${typeIcon}</span>
                         </div>
                     `;
                 }).join('')}
@@ -1636,13 +1783,13 @@ class VideoGenerator {
     }
 
     updateGenerateButton() {
-        const canGenerate = this.currentProject && this.images.length > 0;
+        const canGenerate = this.currentProject && this.mediaItems.length > 0;
         this.elements.generateVideo.disabled = !canGenerate;
     }
 
     lockUI() {
-        // Disable image upload
-        this.elements.imageUpload.disabled = true;
+        // Disable media upload
+        this.elements.mediaUpload.disabled = true;
         
         // Disable audio upload
         this.elements.audioUpload.disabled = true;
@@ -1659,7 +1806,7 @@ class VideoGenerator {
         if (this.elements.videoEffect) this.elements.videoEffect.disabled = true;
         
         // Disable remove buttons
-        document.querySelectorAll('.remove-image').forEach(btn => {
+        document.querySelectorAll('.remove-media').forEach(btn => {
             btn.disabled = true;
         });
 
@@ -1682,8 +1829,8 @@ class VideoGenerator {
     }
 
     unlockUI() {
-        // Enable image upload
-        this.elements.imageUpload.disabled = false;
+        // Enable media upload
+        this.elements.mediaUpload.disabled = false;
         
         // Enable audio upload
         this.elements.audioUpload.disabled = false;
@@ -1700,7 +1847,7 @@ class VideoGenerator {
         if (this.elements.videoEffect) this.elements.videoEffect.disabled = false;
         
         // Enable remove buttons
-        document.querySelectorAll('.remove-image').forEach(btn => {
+        document.querySelectorAll('.remove-media').forEach(btn => {
             btn.disabled = false;
         });
 
@@ -1818,8 +1965,8 @@ class VideoGenerator {
         this.elements.progress.style.display = 'block';
         
         try {
-            // Sort images by timestamp
-            const sortedImages = [...this.images].sort((a, b) => a.timestamp - b.timestamp);
+            // Sort media items by timestamp
+            const sortedMediaItems = [...this.mediaItems].sort((a, b) => a.timestamp - b.timestamp);
             
             // Get video settings
             const [width, height] = this.elements.videoResolution.value.split('x').map(Number);
@@ -1966,7 +2113,7 @@ class VideoGenerator {
             }
             
             // Animate and record
-            await this.animateVideo(sortedImages, width, height, fps, runId);
+            await this.animateVideo(sortedMediaItems, width, height, fps, runId);
             
             // Add delay to ensure all frames are captured before stopping
             console.log('Animation completed, waiting for final frames...');
@@ -2039,7 +2186,7 @@ class VideoGenerator {
         }
     }
 
-    async animateVideo(sortedImages, width, height, fps, runId) {
+    async animateVideo(sortedMediaItems, width, height, fps, runId) {
         return new Promise((resolve) => {
             this.canvas.width = width;
             this.canvas.height = height;
@@ -2062,7 +2209,7 @@ class VideoGenerator {
                     const progress = (currentFrame / totalFrames) * 100;
                     this.elements.progressFill.style.width = `${progress}%`;
                     this.elements.progressPercent.textContent = `${Math.round(progress)}%`;
-                    this.renderVideoFrame(sortedImages, videoTime, width, height);
+                    this.renderVideoFrame(sortedMediaItems, videoTime, width, height);
                     currentFrame++;
                     lastFrameTime += frameTime;
                     elapsed -= frameTime;
@@ -2083,13 +2230,27 @@ class VideoGenerator {
         });
     }
 
-    renderVideoFrame(sortedImages, currentTime, canvasWidth, canvasHeight) {
-        // Keep preview rendering identical to video rendering
-        let currentImage = sortedImages[0];
-        for (let i = sortedImages.length - 1; i >= 0; i--) {
-            if (currentTime >= sortedImages[i].timestamp) {
-                currentImage = sortedImages[i];
+    renderVideoFrame(sortedMediaItems, currentTime, canvasWidth, canvasHeight) {
+        // Find the current media item to display
+        let currentMediaItem = null;
+        
+        for (let i = sortedMediaItems.length - 1; i >= 0; i--) {
+            const item = sortedMediaItems[i];
+            const itemEndTime = item.timestamp + (item.duration || 2); // Default 2 seconds for images
+            
+            if (currentTime >= item.timestamp && currentTime < itemEndTime) {
+                currentMediaItem = item;
                 break;
+            }
+        }
+        
+        // If no media item found, use the last one that has passed
+        if (!currentMediaItem && sortedMediaItems.length > 0) {
+            for (let i = sortedMediaItems.length - 1; i >= 0; i--) {
+                if (currentTime >= sortedMediaItems[i].timestamp) {
+                    currentMediaItem = sortedMediaItems[i];
+                    break;
+                }
             }
         }
         
@@ -2097,9 +2258,13 @@ class VideoGenerator {
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         
-        // Draw current image if exists (same as preview)
-        if (currentImage) {
-            this.drawAnimatedImage(currentImage, currentTime, canvasWidth, canvasHeight);
+        // Draw current media item if exists
+        if (currentMediaItem) {
+            if (currentMediaItem.type === 'image') {
+                this.drawAnimatedImage(currentMediaItem, currentTime, canvasWidth, canvasHeight);
+            } else if (currentMediaItem.type === 'video') {
+                this.drawVideoFrame(currentMediaItem, currentTime, canvasWidth, canvasHeight);
+            }
         }
 
         // Apply selected video effect overlay first
@@ -2147,6 +2312,102 @@ class VideoGenerator {
         this.ctx.restore();
     }
 
+    drawVideoFrame(videoData, currentTime, canvasWidth, canvasHeight) {
+        // Calculate the relative time within the video
+        const videoStartTime = videoData.timestamp;
+        const relativeTime = currentTime - videoStartTime;
+        
+        // Clamp relative time to video duration
+        const clampedTime = Math.max(0, Math.min(relativeTime, videoData.duration));
+        
+        // Get the appropriate frame from cache
+        const frames = this.videoFrameCache.get(videoData.id);
+        if (!frames || frames.length === 0) {
+            // Fallback: draw a black rectangle if no frames available
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            return;
+        }
+        
+        // Find the closest frame to the current time
+        let closestFrame = frames[0];
+        let minTimeDiff = Math.abs(clampedTime - frames[0].time);
+        
+        for (let i = 1; i < frames.length; i++) {
+            const timeDiff = Math.abs(clampedTime - frames[i].time);
+            if (timeDiff < minTimeDiff) {
+                minTimeDiff = timeDiff;
+                closestFrame = frames[i];
+            }
+        }
+        
+        // Draw the frame synchronously using a pre-loaded image
+        this.drawFrameFromDataUrl(closestFrame.dataUrl, canvasWidth, canvasHeight);
+    }
+
+    drawFrameFromDataUrl(dataUrl, canvasWidth, canvasHeight) {
+        try {
+            // Create a temporary image element
+            const img = new Image();
+            
+            // For data URLs, we can set src and it should be available immediately
+            img.src = dataUrl;
+            
+            // Check if image is loaded (data URLs load synchronously)
+            if (img.complete && img.naturalWidth > 0) {
+                this.drawScaledVideoFrame(img, canvasWidth, canvasHeight);
+            } else {
+                // If not loaded immediately, set up onload handler
+                img.onload = () => {
+                    this.drawScaledVideoFrame(img, canvasWidth, canvasHeight);
+                };
+                
+                // Fallback: draw black frame for now
+                this.ctx.fillStyle = '#000000';
+                this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            }
+        } catch (error) {
+            console.warn('Error drawing video frame:', error);
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        }
+    }
+
+    drawScaledVideoFrame(img, canvasWidth, canvasHeight) {
+        // Calculate scaling to fit the frame within the canvas while maintaining aspect ratio
+        // The frame should be fully visible and scaled to fill at least one dimension completely
+        const imgAspect = img.naturalWidth / img.naturalHeight;
+        const canvasAspect = canvasWidth / canvasHeight;
+        
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        if (imgAspect > canvasAspect) {
+            // Image is wider than canvas - fit to width
+            drawWidth = canvasWidth;
+            drawHeight = canvasWidth / imgAspect;
+            drawX = 0;
+            drawY = (canvasHeight - drawHeight) / 2;
+        } else {
+            // Image is taller than canvas - fit to height
+            drawHeight = canvasHeight;
+            drawWidth = canvasHeight * imgAspect;
+            drawX = (canvasWidth - drawWidth) / 2;
+            drawY = 0;
+        }
+        
+        // Fill the background with black first
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        
+        // Draw the scaled video frame with high quality
+        this.ctx.save();
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
+        this.ctx.globalAlpha = 1;
+        this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        this.ctx.restore();
+    }
+
     showVideoResult(blob) {
         const url = URL.createObjectURL(blob);
         this.elements.resultVideo.src = url;
@@ -2177,8 +2438,8 @@ class VideoGenerator {
     }
 
     playPreview() {
-        if (this.images.length === 0) {
-            alert('Добавьте изображения для предварительного просмотра');
+        if (this.mediaItems.length === 0) {
+            alert('Добавьте изображения или видео для предварительного просмотра');
             return;
         }
         
@@ -2256,20 +2517,21 @@ class VideoGenerator {
 
     renderPreviewFrame(currentTime) {
         // Keep preview rendering identical to video rendering
-        const sortedImages = [...this.images].sort((a, b) => a.timestamp - b.timestamp);
-        this.renderVideoFrame(sortedImages, currentTime, this.canvas.width, this.canvas.height);
+        const sortedMediaItems = [...this.mediaItems].sort((a, b) => a.timestamp - b.timestamp);
+        this.renderVideoFrame(sortedMediaItems, currentTime, this.canvas.width, this.canvas.height);
     }
 
     resetProject() {
         this.currentProject = null;
-        this.images = [];
+        this.mediaItems = [];
         this.subtitles = [];
         this.audioFile = null;
         this.generatedVideoBlob = null;
+        this.videoFrameCache.clear();
         
         // Reset UI
         this.elements.currentProject.style.display = 'none';
-        this.elements.imageList.innerHTML = '';
+        this.elements.mediaList.innerHTML = '';
         if (this.elements.subtitleList) this.elements.subtitleList.innerHTML = '';
         this.elements.audioPlayer.style.display = 'none';
         this.elements.resultSection.style.display = 'none';
@@ -2302,8 +2564,8 @@ class VideoGenerator {
             intensity: parseInt(this.elements?.effectIntensity?.value || '50', 10),
             copyright: (this.elements?.copyrightText?.value || '').trim()
         };
-        // Serialize images to data URLs
-        const images = await Promise.all(this.images.map(imgData => this.serializeImage(imgData)));
+        // Serialize media items to data URLs
+        const mediaItems = await Promise.all(this.mediaItems.map(item => this.serializeMediaItem(item)));
         // Serialize audio to data URL if present
         let audio = null;
         if (this.audioFile) {
@@ -2314,7 +2576,7 @@ class VideoGenerator {
         }
         // Subtitles
         const subtitles = this.subtitles.map(s => ({ id: s.id, text: s.text, start: s.start, duration: s.duration }));
-        const payload = { version: 1, settings, images, audio, subtitles };
+        const payload = { version: 2, settings, mediaItems, audio, subtitles };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -2397,18 +2659,58 @@ class VideoGenerator {
             this.elements.audioPlayer.style.display = 'block';
         }
         
-        // Images
-        this.images = [];
-        if (Array.isArray(data.images)) {
+        // Media Items (backward compatibility with old 'images' format)
+        this.mediaItems = [];
+        
+        // Handle new format (version 2+)
+        if (Array.isArray(data.mediaItems)) {
+            for (const item of data.mediaItems) {
+                if (item.type === 'image') {
+                    const imageEl = await this.createImageFromDataURL(item.dataUrl);
+                    this.mediaItems.push({
+                        id: Date.now() + Math.random(),
+                        name: item.name || 'image',
+                        src: item.dataUrl,
+                        type: 'image',
+                        element: imageEl,
+                        timestamp: item.timestamp || 0,
+                        timestampDisplay: this.formatTime(item.timestamp || 0),
+                        width: imageEl.naturalWidth,
+                        height: imageEl.naturalHeight
+                    });
+                } else if (item.type === 'video') {
+                    // For saved video items, we'll need to recreate the video element
+                    // Note: Video files can't be fully serialized, so we'll show a placeholder
+                    this.mediaItems.push({
+                        id: Date.now() + Math.random(),
+                        name: item.name || 'video',
+                        src: item.previewFrame || item.dataUrl,
+                        type: 'video',
+                        timestamp: item.timestamp || 0,
+                        timestampDisplay: this.formatTime(item.timestamp || 0),
+                        duration: item.duration || 10,
+                        width: item.width || 1920,
+                        height: item.height || 1080,
+                        previewFrame: item.previewFrame,
+                        isPlaceholder: true // Mark as placeholder since actual video file is not available
+                    });
+                }
+            }
+        }
+        // Handle old format (version 1) - backward compatibility
+        else if (Array.isArray(data.images)) {
             for (const im of data.images) {
                 const imageEl = await this.createImageFromDataURL(im.dataUrl);
-                this.images.push({
+                this.mediaItems.push({
                     id: Date.now() + Math.random(),
                     name: im.name || 'image',
                     src: im.dataUrl,
+                    type: 'image',
                     element: imageEl,
                     timestamp: im.timestamp || 0,
-                    timestampDisplay: this.formatTime(im.timestamp || 0)
+                    timestampDisplay: this.formatTime(im.timestamp || 0),
+                    width: imageEl.naturalWidth,
+                    height: imageEl.naturalHeight
                 });
             }
         }
@@ -2417,7 +2719,7 @@ class VideoGenerator {
         this.subtitles = Array.isArray(data.subtitles) ? data.subtitles.map(s => ({ id: s.id || (Date.now()+Math.random()), text: s.text || '', start: s.start || 0, duration: s.duration || 3 })) : [];
         
         // UI updates
-        this.renderImageList();
+        this.renderMediaList();
         this.renderSubtitleList();
         this.updateTimeline();
         
@@ -2428,10 +2730,34 @@ class VideoGenerator {
         this.updateGenerateButton();
     }
 
-    async serializeImage(imgData) {
-        const name = imgData.name || 'image';
-        const srcDataUrl = await this.imageToDataURL(imgData.element);
-        return { name, timestamp: imgData.timestamp || 0, dataUrl: srcDataUrl };
+    async serializeMediaItem(itemData) {
+        const name = itemData.name || 'media';
+        const timestamp = itemData.timestamp || 0;
+        
+        if (itemData.type === 'image') {
+            const srcDataUrl = await this.imageToDataURL(itemData.element);
+            return { 
+                name, 
+                timestamp, 
+                type: 'image',
+                dataUrl: srcDataUrl,
+                width: itemData.width,
+                height: itemData.height
+            };
+        } else if (itemData.type === 'video') {
+            return { 
+                name, 
+                timestamp, 
+                type: 'video',
+                duration: itemData.duration,
+                width: itemData.width,
+                height: itemData.height,
+                previewFrame: itemData.previewFrame
+            };
+        }
+        
+        // Fallback for unknown types
+        return { name, timestamp, type: 'unknown' };
     }
 
     imageToDataURL(imgEl) {

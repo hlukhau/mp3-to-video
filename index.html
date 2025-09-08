@@ -49,17 +49,18 @@
                 </div>
             </section>
 
-            <!-- Image Upload Section -->
+            <!-- Media Upload Section -->
             <section class="upload-section">
-                <h2>Добавить изображения</h2>
+                <h2>Добавить изображения и видео</h2>
                 <div class="upload-area">
-                    <input type="file" id="imageUpload" multiple accept="image/*" class="file-input">
-                    <label for="imageUpload" class="upload-label">
+                    <input type="file" id="mediaUpload" multiple accept="image/*,video/*" class="file-input">
+                    <label for="mediaUpload" class="upload-label">
                         <div class="upload-icon">📁</div>
-                        <p>Выберите изображения или перетащите их сюда</p>
+                        <p>Выберите изображения и видеофайлы или перетащите их сюда</p>
+                        <small>Поддерживаются: JPG, PNG, GIF, MP4, WebM, MOV</small>
                     </label>
                 </div>
-                <div id="imageList" class="image-list"></div>
+                <div id="mediaList" class="media-list"></div>
             </section>
 
             <!-- Subtitles Section -->
