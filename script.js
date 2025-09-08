@@ -218,44 +218,215 @@ class VideoGenerator {
     drawFilmEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        // slight sepia tint (a bit stronger with intensity)
-        this.ctx.fillStyle = `rgba(112, 66, 20, ${0.06 + 0.04 * (I.alpha)})`;
+        
+        // Enhanced sepia tint with subtle color variations
+        const sepiaR = 112 + this.noise11(currentTime * 0.5, 1) * 20;
+        const sepiaG = 66 + this.noise11(currentTime * 0.4, 2) * 15;
+        const sepiaB = 20 + this.noise11(currentTime * 0.3, 3) * 10;
+        this.ctx.fillStyle = `rgba(${sepiaR}, ${sepiaG}, ${sepiaB}, ${0.08 + 0.06 * I.alpha})`;
         this.ctx.fillRect(0, 0, w, h);
-        // vignette
-        const grd = this.ctx.createRadialGradient(w/2, h/2, Math.min(w,h)/3, w/2, h/2, Math.max(w,h)/1.1);
-        grd.addColorStop(0, 'rgba(0,0,0,0)');
-        grd.addColorStop(1, `rgba(0,0,0,${0.25 + 0.25 * I.alpha})`);
-        this.ctx.fillStyle = grd;
-        this.ctx.fillRect(0, 0, w, h);
-        // scratches
-        this.ctx.globalAlpha = 0.12 + 0.25 * I.alpha;
-        this.ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-        const sCount = Math.max(2, Math.round(10 * I.count));
-        for (let i = 0; i < sCount; i++) {
-            const sx = (this.noise01(currentTime * 0.2, i * 17) * 1.1 - 0.05) * w; // allow slightly offscreen
-            const jitter = this.noise11(currentTime * 4, i * 31) * 12;
-            const y1 = -10;
-            const y2 = h + 10;
+        
+        // Film grain - realistic noise texture
+        this.drawFilmGrain(currentTime, w, h, I);
+        
+        // Gate weave / frame jitter overlays (simulate subtle camera/film movement without shifting content)
+        const weaveX = this.noise11(currentTime * 1.7, 321) * 2.0;
+        const weaveY = this.noise11(currentTime * 1.3, 654) * 1.5;
+        const edgeDark = 0.06 + 0.06 * I.alpha;
+        this.ctx.fillStyle = `rgba(0,0,0,${edgeDark})`;
+        // Thin dark borders that wobble
+        this.ctx.fillRect(0, 0, Math.max(0, 3 + weaveX), h);
+        this.ctx.fillRect(w - Math.max(0, 3 - weaveX), 0, Math.max(0, 3 - weaveX), h);
+        this.ctx.fillRect(0, 0, w, Math.max(0, 3 + weaveY));
+        this.ctx.fillRect(0, h - Math.max(0, 4 - weaveY), w, Math.max(0, 4 - weaveY));
+
+        // Enhanced vignette with irregular edges
+        const vignetteIntensity = 0.3 + 0.3 * I.alpha;
+        for (let i = 0; i < 3; i++) {
+            const offsetX = this.noise11(currentTime * 0.1, i * 10) * 20;
+            const offsetY = this.noise11(currentTime * 0.08, i * 15) * 15;
+            const grd = this.ctx.createRadialGradient(
+                w/2 + offsetX, h/2 + offsetY, Math.min(w,h)/4, 
+                w/2 + offsetX, h/2 + offsetY, Math.max(w,h)/1.2
+            );
+            grd.addColorStop(0, 'rgba(0,0,0,0)');
+            grd.addColorStop(1, `rgba(0,0,0,${vignetteIntensity * (0.3 + i * 0.1)})`);
+            this.ctx.fillStyle = grd;
+            this.ctx.fillRect(0, 0, w, h);
+        }
+        
+        // Film flicker effect
+        const flickerIntensity = 0.05 + 0.1 * I.alpha;
+        const flicker = this.noise11(currentTime * 12, 100) * flickerIntensity;
+        if (Math.abs(flicker) > 0.02) {
+            this.ctx.fillStyle = flicker > 0 ? 
+                `rgba(255,255,255,${Math.abs(flicker)})` : 
+                `rgba(0,0,0,${Math.abs(flicker)})`;
+            this.ctx.fillRect(0, 0, w, h);
+        }
+
+        // Light leaks from edges (occasional)
+        const leakChance = this.noise01(currentTime * 0.2, 777);
+        if (leakChance > 0.75) {
+            const side = (leakChance > 0.88) ? 'left' : 'right';
+            const leak = this.ctx.createLinearGradient(side === 'left' ? 0 : w, 0, side === 'left' ? Math.min(200, w*0.25) : w - Math.min(200, w*0.25), 0);
+            const a = (leakChance - 0.75) * 0.6 * (0.6 + 0.6 * I.alpha);
+            const c1 = `rgba(255, 120, 60, ${a})`;
+            const c2 = `rgba(255, 200, 150, ${a * 0.6})`;
+            const c3 = 'rgba(255, 255, 255, 0)';
+            leak.addColorStop(0, c1);
+            leak.addColorStop(0.4, c2);
+            leak.addColorStop(1, c3);
+            this.ctx.fillStyle = leak;
+            this.ctx.fillRect(0, 0, w, h);
+        }
+        
+        // Enhanced scratches with varying opacity and width
+        this.ctx.globalAlpha = 0.15 + 0.3 * I.alpha;
+        this.ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        const scratchCount = Math.max(3, Math.round(12 * I.count));
+        
+        for (let i = 0; i < scratchCount; i++) {
+            const scratchLife = (currentTime * (0.3 + i * 0.1)) % 2; // 2 second cycle
+            if (scratchLife > 1.5) continue; // Scratch appears for 1.5 out of 2 seconds
+            
+            const x = this.noise01(currentTime * 0.1, i * 50) * w;
+            const scratchHeight = (0.3 + this.noise01(0, i) * 0.7) * h;
+            const y1 = this.noise01(currentTime * 0.05, i * 30) * (h - scratchHeight);
+            const y2 = y1 + scratchHeight;
+            
+            // Varying scratch width and opacity
+            const width = (0.5 + this.noise01(0, i) * 1.5) * I.size;
+            const opacity = (0.4 + this.noise01(scratchLife * 5, i) * 0.6) * (1.5 - scratchLife);
+            
+            this.ctx.lineWidth = width;
+            this.ctx.globalAlpha = opacity * I.alpha;
             this.ctx.beginPath();
-            this.ctx.moveTo(sx, y1);
-            this.ctx.lineTo(sx + jitter, y2);
-            this.ctx.lineWidth = (0.4 + this.noise01(currentTime * 0.7, i * 13) * 1.8) * I.size;
+            this.ctx.moveTo(x, y1);
+            this.ctx.lineTo(x + this.noise11(currentTime, i) * 5, y2);
             this.ctx.stroke();
         }
-        // dust particles
-        for (let i = 0, n = Math.max(5, Math.round(80 * I.count)); i < n; i++) {
-            const x = this.noise01(currentTime * 0.9, i * 101) * w;
-            const y = this.noise01(currentTime * 0.7, i * 97) * h;
-            const r = (0.2 + this.noise01(currentTime * 1.3, i * 29) * 1.4) * I.size;
-            this.ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.1 * I.alpha})`;
+
+        // Occasional cue mark (reel change dot) top-right
+        if (((currentTime / 10) | 0) % 2 === 0 && (currentTime % 10) > 8.5) {
+            this.ctx.globalAlpha = 0.4 * I.alpha;
+            this.ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            const r = Math.min(10, Math.max(6, Math.round(Math.min(w, h) * 0.01)));
+            this.ctx.beginPath();
+            this.ctx.arc(w - r * 1.5, r * 1.5, r, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.globalAlpha = 1;
+        }
+        
+        // Hair and debris
+        this.drawFilmDebris(currentTime, w, h, I);
+        
+        // Enhanced dust particles with varying sizes and movement
+        this.ctx.globalAlpha = 1;
+        const dustCount = Math.max(8, Math.round(120 * I.count));
+        for (let i = 0; i < dustCount; i++) {
+            const dustLife = (currentTime * (0.5 + i * 0.02)) % 3; // 3 second cycle
+            const dustOpacity = Math.sin(dustLife * Math.PI / 3) * 0.3; // Fade in/out
+            
+            if (dustOpacity < 0.05) continue;
+            
+            const x = (this.noise01(currentTime * 0.8, i * 101) * w + currentTime * (10 + i % 20)) % (w + 100) - 50;
+            const y = (this.noise01(currentTime * 0.6, i * 97) * h + currentTime * (5 + i % 15)) % (h + 100) - 50;
+            const r = (0.3 + this.noise01(currentTime * 1.1, i * 29) * 2.0) * I.size;
+            
+            // Different types of dust particles
+            const dustType = i % 3;
+            let dustColor;
+            switch (dustType) {
+                case 0: // White dust
+                    dustColor = `rgba(255,255,255,${dustOpacity * I.alpha})`;
+                    break;
+                case 1: // Dark spots
+                    dustColor = `rgba(50,30,20,${dustOpacity * I.alpha})`;
+                    break;
+                default: // Sepia dust
+                    dustColor = `rgba(200,150,100,${dustOpacity * I.alpha})`;
+            }
+            
+            this.ctx.fillStyle = dustColor;
             this.ctx.beginPath();
             this.ctx.arc(x, y, r, 0, Math.PI * 2);
             this.ctx.fill();
         }
+
+        // Film burn effect (rare brief appearance)
+        const burnChance = this.noise01(currentTime * 0.12, 4242);
+        if (burnChance > 0.97) {
+            const bx = this.noise01(currentTime * 0.3, 12) * w;
+            const by = this.noise01(currentTime * 0.27, 34) * h;
+            const br = 20 + 60 * (burnChance - 0.97) / 0.03;
+            // Inner charred area
+            const g1 = this.ctx.createRadialGradient(bx, by, 0, bx, by, br);
+            g1.addColorStop(0, 'rgba(0,0,0,0.8)');
+            g1.addColorStop(0.7, 'rgba(30,10,0,0.7)');
+            g1.addColorStop(1, 'rgba(0,0,0,0)');
+            this.ctx.fillStyle = g1;
+            this.ctx.beginPath();
+            this.ctx.arc(bx, by, br, 0, Math.PI * 2);
+            this.ctx.fill();
+            // Hot rim
+            const g2 = this.ctx.createRadialGradient(bx, by, br * 0.6, bx, by, br * 1.1);
+            g2.addColorStop(0, 'rgba(255,180,80,0.35)');
+            g2.addColorStop(1, 'rgba(255,180,80,0)');
+            this.ctx.fillStyle = g2;
+            this.ctx.beginPath();
+            this.ctx.arc(bx, by, br * 1.1, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+        
         this.ctx.restore();
     }
 
-    // Elegant copyright overlay in top-right corner (so it doesn't overlap bottom subtitles)
+    drawFilmGrain(currentTime, w, h, I) {
+        // Create realistic film grain texture
+        const grainIntensity = 0.02 + 0.04 * I.alpha;
+        const grainSize = Math.max(1, Math.round(2 * I.size));
+        const grainCount = Math.round((w * h) / (grainSize * grainSize * 4));
+        
+        for (let i = 0; i < grainCount; i++) {
+            const x = (this.noise01(currentTime * 10, i * 123) * w) % w;
+            const y = (this.noise01(currentTime * 8, i * 456) * h) % h;
+            const brightness = this.noise11(currentTime * 15, i * 789);
+            const alpha = Math.abs(brightness) * grainIntensity;
+            
+            const color = brightness > 0 ? 255 : 0;
+            this.ctx.fillStyle = `rgba(${color},${color},${color},${alpha})`;
+            this.ctx.fillRect(x, y, grainSize, grainSize);
+        }
+    }
+
+    drawFilmDebris(currentTime, w, h, I) {
+        // Hair-like scratches and debris
+        this.ctx.globalAlpha = 0.1 + 0.2 * I.alpha;
+        this.ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        
+        const debrisCount = Math.max(2, Math.round(6 * I.count));
+        for (let i = 0; i < debrisCount; i++) {
+            const debrisLife = (currentTime * (0.2 + i * 0.05)) % 4; // 4 second cycle
+            if (debrisLife > 2) continue; // Appears for half the cycle
+            
+            const startX = this.noise01(currentTime * 0.05, i * 200) * w;
+            const startY = this.noise01(currentTime * 0.03, i * 300) * h;
+            const length = (20 + this.noise01(0, i) * 40) * I.size;
+            const angle = this.noise11(0, i * 100) * Math.PI * 2;
+            
+            const endX = startX + Math.cos(angle) * length;
+            const endY = startY + Math.sin(angle) * length * 0.6; // Flatten vertically
+            const width = (0.5 + this.noise01(0, i) * 1.5) * I.size;
+            
+            this.ctx.lineWidth = width;
+            this.ctx.beginPath();
+            this.ctx.moveTo(startX, startY);
+            this.ctx.lineTo(endX, endY);
+            this.ctx.stroke();
+        }
+    }
+
     drawCopyrightOverlay(canvasWidth, canvasHeight) {
         const text = (this.elements?.copyrightText?.value || '').trim();
         if (!text) return;
@@ -343,49 +514,228 @@ class VideoGenerator {
     drawFireworksEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        const burstsPerSec = 0.8 + 1.8 * I.count;
-        const activeBursts = Math.max(1, Math.round(3 * I.count));
-        for (let b = 0; b < activeBursts; b++) {
-            const seed = b * 997;
-            // Each burst gets its own phase offset so they are not synchronized
-            const phase = (currentTime * burstsPerSec + this.noise01(b * 0.37, 0)) % 1;
-            const life = phase; // 0..1
-            const alive = life < 0.95; // short fade-out gap
-            if (!alive) continue;
-            // Randomize center per burst slowly over time
-            const cx = this.noise01(currentTime * 0.2, seed * 0.13) * (w * 0.8) + w * 0.1;
-            const cy = this.noise01(currentTime * 0.25, seed * 0.31) * (h * 0.5) + h * 0.2;
-            const particles = Math.max(18, Math.round(44 * I.count));
-            for (let p = 0; p < particles; p++) {
-                // Assign each particle its own slight angular speed and curvature for chaos
-                const baseAng = (p / particles) * Math.PI * 2;
-                const angJitter = this.noise11(currentTime * 1.3, seed + p * 17) * 0.4;
-                const angle = baseAng + angJitter * life;
-                const radius = Math.pow(life, 0.55) * Math.min(w, h) * (0.25 + 0.15 * this.noise01(currentTime*0.9, p));
-                const x = cx + Math.cos(angle) * radius;
-                const y = cy + Math.sin(angle) * radius;
-                const alpha = Math.max(0, 1 - life) * (0.8 + 0.2 * this.noise01(currentTime*2.1, p));
-                const hue = (seed + p * 23 + Math.floor(this.noise01(currentTime, p) * 120)) % 360;
-                this.ctx.fillStyle = `hsla(${hue}, 90%, 60%, ${alpha})`;
+        const launchesPerSec = 0.5 + 1.5 * I.count;
+        const activeShells = Math.max(2, Math.round(3 + 3 * I.count));
+
+        for (let s = 0; s < activeShells; s++) {
+            const seed = s * 911;
+            const phase = (currentTime * launchesPerSec + this.noise01(seed * 0.37, 0)) % 1; // 0..1
+
+            // Launch phase (0..0.35), Burst phase (0.35..0.65), Ember phase (0.65..1)
+            const isLaunch = phase < 0.35;
+            const isBurst = phase >= 0.35 && phase < 0.65;
+            const isEmber = phase >= 0.65 && phase < 1.0;
+
+            // Launch position and target burst center
+            const launchX = this.noise01(currentTime * 0.05, seed) * (w * 0.8) + w * 0.1;
+            const targetX = this.noise01(currentTime * 0.12, seed * 1.7) * (w * 0.6) + w * 0.2;
+            const targetY = this.noise01(currentTime * 0.13, seed * 2.3) * (h * 0.35) + h * 0.08;
+
+            if (isLaunch) {
+                const t = phase / 0.35; // 0..1
+                const y = h - t * (h - targetY);
+                const x = launchX + (targetX - launchX) * (0.8 * t + 0.2 * t * t);
+                const glow = 0.6 + 0.4 * this.noise01(currentTime * 8, seed);
+
+                // Rocket core
+                this.ctx.globalAlpha = (0.8 * glow) * I.alpha;
+                this.ctx.fillStyle = 'rgba(255, 230, 150, 1)';
                 this.ctx.beginPath();
-                this.ctx.arc(x, y, (1.6 + this.noise01(currentTime, p) * 1.2) * I.size, 0, Math.PI * 2);
+                this.ctx.arc(x, y, 2.2 * I.size, 0, Math.PI * 2);
                 this.ctx.fill();
+
+                // Tail flame
+                this.drawRadialGlow(x, y + 6, 10 * I.size, 'rgba(255,180,80,1)', 0.55 * glow * I.alpha);
+                this.drawRadialGlow(x, y + 12, 16 * I.size, 'rgba(255,120,40,1)', 0.35 * glow * I.alpha);
+
+                // Spark trail
+                const sparks = 14;
+                for (let i = 0; i < sparks; i++) {
+                    const ang = Math.PI + (i / sparks) * 0.6 - 0.3;
+                    const dist = 8 + i * 1.7;
+                    const sx = x + Math.cos(ang) * dist;
+                    const sy = y + Math.sin(ang) * dist + i * 1.6;
+                    this.ctx.globalAlpha = (0.5 - i / sparks * 0.5) * I.alpha;
+                    this.ctx.fillStyle = 'rgba(255,220,150,1)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(sx, sy, Math.max(0.6, 1.2 - i * 0.05) * I.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Smoke puffs along trail
+                for (let i = 0; i < 3; i++) {
+                    const f = i / 3;
+                    this.drawSmokePuff(x + this.noise11(currentTime * 0.5, seed + i) * 4,
+                                       y + 10 + f * 20,
+                                       10 + 14 * f,
+                                       0.15 * (1 - t) * I.alpha);
+                }
+                continue;
+            }
+
+            // Burst center
+            const cx = targetX;
+            const cy = targetY;
+
+            // Explosion flash on burst start
+            if (phase < 0.38) {
+                const f = (0.38 - phase) / 0.03; // 0..1 shortly
+                this.drawRadialGlow(cx, cy, 48 * I.size, 'rgba(255,255,255,1)', 0.6 * f * I.alpha);
+                this.drawRadialGlow(cx, cy, 90 * I.size, 'rgba(255,200,120,1)', 0.35 * f * I.alpha);
+            }
+
+            // Choose firework style deterministically per shell
+            const type = seed % 5; // 0: Peony, 1: Chrysanthemum, 2: Willow, 3: Palm, 4: Crackle
+            const particleCount = Math.max(60, Math.round(120 * I.count));
+            const life = isBurst ? (phase - 0.35) / 0.3 : (phase - 0.65) / 0.35; // 0..1 within each stage
+
+            for (let p = 0; p < particleCount; p++) {
+                const a0 = (p / particleCount) * Math.PI * 2;
+                const jitter = this.noise11(currentTime * 0.6, seed + p * 17) * 0.25;
+                let ang = a0 + jitter;
+
+                // Polar speed profile by type
+                let v0;
+                if (type === 2) { // Willow - slower with gravity droop
+                    v0 = 120 + 40 * this.noise01(0, seed + p);
+                } else if (type === 3) { // Palm - emphasize vertical streaks
+                    ang = Math.round(ang / (Math.PI / 6)) * (Math.PI / 6);
+                    v0 = 160 + 60 * this.noise01(0, seed + p);
+                } else {
+                    v0 = 140 + 60 * this.noise01(0, seed + p);
+                }
+
+                // Radial distance over time with decay
+                const decay = 0.92;
+                const speed = v0 * Math.pow(decay, (isBurst ? life : (0.3 + life)) * 60);
+                const r = speed * (isBurst ? life : (0.3 + life));
+
+                // Gravity droop for willow and general arc
+                const gy = (type === 2 ? 220 : 150) * (isBurst ? life * life : (0.3 + life) * (0.3 + life));
+                const x = cx + Math.cos(ang) * r;
+                const y = cy + Math.sin(ang) * r + gy;
+                if (y > h + 60) continue;
+
+                // Color selection
+                const palettes = [
+                    [45, 60, 75],     // gold range
+                    [10, 20, 30],     // orange-red
+                    [200, 260, 300],  // blue-purple
+                    [100, 120, 140],  // green
+                    [0, 45, 60]       // crackle: warm
+                ];
+                const hues = palettes[type];
+                const hue = hues[(p + seed) % hues.length] + this.noise11(0, p) * 15;
+                const sat = 80 + this.noise01(0, p) * 20;
+                const lum = 50 + this.noise01(0, seed + p) * 40;
+
+                // Alpha by stage
+                const stageLife = isBurst ? (1 - life) : (1 - life) * 0.8;
+                const alpha = Math.max(0, stageLife) * (0.8 + 0.2 * this.noise01(currentTime * 3, p));
+                const size = (isBurst ? 1.6 : 1.2) * (1.0 + this.noise01(0, p)) * I.size * stageLife;
+
+                // Glow + core
+                this.drawRadialGlow(x, y, size * 3.2, `hsla(${hue}, ${sat}%, ${lum}%, 1)`, 0.3 * alpha * I.alpha);
+                this.ctx.globalAlpha = alpha * I.alpha;
+                this.ctx.fillStyle = `hsla(${hue}, ${Math.min(100, sat + 15)}%, ${Math.min(90, lum + 15)}%, 1)`;
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, Math.max(0.8, size), 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Trailing streaks
+                if (p % 3 === 0) {
+                    this.ctx.globalAlpha = 0.45 * alpha * I.alpha;
+                    this.ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${lum}%, 1)`;
+                    this.ctx.lineWidth = Math.max(0.6, size * 0.45);
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x - Math.cos(ang) * 14, y - Math.sin(ang) * 14);
+                    this.ctx.lineTo(x, y);
+                    this.ctx.stroke();
+                }
+
+                // Crackle micro-sparks for type 4 near the end
+                if (type === 4 && isEmber && (p % 8 === 0)) {
+                    const m = 4;
+                    for (let k = 0; k < m; k++) {
+                        const aa = ang + this.noise11(currentTime * 2, seed + p * 31 + k) * 0.6;
+                        const rr = 6 + 10 * this.noise01(0, k + p);
+                        const mx = x + Math.cos(aa) * rr;
+                        const my = y + Math.sin(aa) * rr;
+                        this.ctx.globalAlpha = 0.5 * alpha * I.alpha;
+                        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${Math.min(90, lum + 10)}%, 1)`;
+                        this.ctx.beginPath();
+                        this.ctx.arc(mx, my, 0.7, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                }
+            }
+
+            // Residual smoke cloud after burst
+            const smokeAlpha = (isEmber ? (1 - (phase - 0.65) / 0.35) : (isBurst ? 0.5 : 0)) * (0.2 + 0.3 * I.alpha);
+            if (smokeAlpha > 0.02) {
+                for (let i = 0; i < 4; i++) {
+                    this.drawSmokePuff(cx + this.noise11(currentTime * 0.2, seed + i) * 18,
+                                       cy + this.noise11(currentTime * 0.25, seed + 77 + i) * 14,
+                                       22 + i * 10,
+                                       smokeAlpha * (0.7 - i * 0.12));
+                }
             }
         }
+        
         this.ctx.restore();
+    }
+
+    // Helper: soft radial glow
+    drawRadialGlow(x, y, r, color, alpha) {
+        if (alpha <= 0) return;
+        const grd = this.ctx.createRadialGradient(x, y, 0, x, y, r);
+        // Use provided color at center
+        grd.addColorStop(0, color);
+        // Create a transparent version of the color for outer edge
+        let transparent;
+        if (typeof color === 'string' && color.startsWith('rgba(')) {
+            transparent = color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, 'rgba($1,$2,$3,0)');
+        } else if (typeof color === 'string' && color.startsWith('hsla(')) {
+            transparent = color.replace(/hsla\(([^,]+),([^,]+),([^,]+),[^)]+\)/, 'hsla($1,$2,$3,0)');
+        } else {
+            transparent = 'rgba(255,255,255,0)';
+        }
+        grd.addColorStop(1, transparent);
+        this.ctx.globalAlpha = alpha;
+        this.ctx.fillStyle = grd;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, r, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.globalAlpha = 1;
+    }
+
+    // Helper: smoke puff
+    drawSmokePuff(x, y, r, alpha) {
+        if (alpha <= 0) return;
+        const g = this.ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, `rgba(200, 200, 200, ${Math.min(0.35, alpha)})`);
+        g.addColorStop(1, 'rgba(200,200,200,0)');
+        this.ctx.globalAlpha = 1;
+        this.ctx.fillStyle = g;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, r, 0, Math.PI * 2);
+        this.ctx.fill();
     }
 
     drawStarsEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        const count = Math.max(40, Math.round(((w * h) / 16000 + 60) * I.count));
+        const count = Math.max(40, Math.round(((w * h) / 16000) * I.count));
         for (let i = 0; i < count; i++) {
             // Slower gentle drift
             const vx = (this.noise11(currentTime * 0.08, i * 3) * 8) + 2 * (i % 3);
             const vy = this.noise11(currentTime * 0.09, i * 7) * 4;
             const baseX = (i * 97) % (w + 200) - 100;
             const baseY = (i * 57) % (h + 200) - 100;
-            const x = ((baseX + currentTime * vx) % (w + 200)) - 100;
+            const sway = this.noise11(currentTime * 2.2, i * 0.7) * 10; // local curvature
+            const seed = i * 97; // Define seed variable
+            const t = (currentTime + (seed % 1000) / 997) % 1000;
+            const x = ((baseX + currentTime * vx) % (w + 200)) - 100 + sway;
             const y = ((baseY + currentTime * (6 + vy)) % (h + 200)) - 100;
             const tw = 0.25 + 0.75 * this.noise01(currentTime * (1.8 + (i % 5) * 0.25), i * 11);
             this.ctx.fillStyle = `rgba(255,255,255,${tw})`;
@@ -395,141 +745,489 @@ class VideoGenerator {
         this.ctx.restore();
     }
 
-    // Galaxy: rotating spiral arms, twinkling stars, inclined view from slightly above and inside
+    // Galaxy: rotating spiral arms, twinkling stars, view from inside galaxy disk looking up
     drawGalaxyEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        // Camera/view params
-        const cx = w * 0.48;  // center slightly left of center
-        const cy = h * 0.58;  // a bit lower to feel "from above"
-        const tilt = 0.65;    // inclination of the disk (0..1); y compressed
+        
+        // Camera/view params - we are inside the galaxy disk, looking up/around
+        const cx = w * 0.5;   // center horizontally in middle
+        const cy = h * 1.1;   // center below the screen but not too far (so stars are visible)
+        const tilt = 0.7;     // moderate inclination - we see the disk from slightly above
         const armCount = 4;   // spiral arms
-        const pitch = 0.28;   // spiral tightness
-        const baseRadius = Math.min(w, h) * 0.95; // galaxy approximate radius
-        const rotBase = 0.12; // base rotation speed (rad/s)
-        const rotGain = 0.7;  // inner parts rotate faster
+        const pitch = 0.18;   // slightly tighter spiral for more definition
+        const baseRadius = Math.min(w, h) * 3.0; // large radius but not too massive
+        const rotBase = 0.015; // slower base rotation speed
+        const rotGain = 0.35;  // moderate difference in rotation speeds
 
-        const count = Math.max(180, Math.round(((w * h) / 9000) * I.count));
-        for (let i = 0; i < count; i++) {
-            // Seeds
-            const seed = (i * 16807) % 2147483647;
-            const r01 = ((seed ^ 0x9e3779b9) & 0xffff) / 0xffff; // 0..1
-            const r02 = ((seed * 48271) % 2147483647) / 2147483647;
-
-            // Radial distance with denser inner region
-            const radius = 20 + Math.pow(r01, 1.2) * baseRadius;
-
-            // Assign to an arm and compute spiral angle via logarithmic spiral approximation
-            const arm = i % armCount;
-            const armOffset = (arm / armCount) * Math.PI * 2;
-            const spiralTheta = armOffset + pitch * Math.log(1 + radius);
-
-            // Differential rotation (inner faster)
-            const rNorm = Math.min(1, radius / baseRadius);
-            const angSpeed = rotBase + rotGain * Math.pow(1 - rNorm, 1.3);
-            const rotation = currentTime * angSpeed;
-
-            // Add subtle wobble to avoid rigid arms
-            const wobble = this.noise11(currentTime * 0.6, i * 0.11) * (0.08 + 0.12 * (1 - rNorm));
-            const theta = spiralTheta + rotation + wobble + r02 * 0.4;
-
-            // Position with inclination (tilt) and slight vertical parallax
-            const x = cx + Math.cos(theta) * radius;
-            const y = cy + Math.sin(theta) * radius * tilt - rNorm * 12; // small vertical offset to feel above the plane
-
-            if (x < -120 || x > w + 120 || y < -120 || y > h + 120) continue;
-
-            // Size and twinkle (brighter towards the core)
-            const coreFactor = 1 - rNorm;
-            const baseSize = 1 + Math.floor(2 + coreFactor * 2 + (i % 5 === 0 ? 1 : 0));
-            const size = baseSize * I.size;
-            const tw = 0.35 + 0.65 * this.noise01(currentTime * (1.6 + (i % 5) * 0.4), i * 7 + radius * 0.0015);
-
-            // Color: warmer in core, cooler on outskirts
-            const hue = Math.round(200 - coreFactor * 40 + (i % 7));
-            const sat = 30 + Math.round(coreFactor * 20);
-            const lum = 60 + Math.round(coreFactor * 20);
-            this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${tw})`;
-
-            // Draw star point and small cross
-            this.ctx.fillRect(x, y, size, size);
-            this.ctx.globalAlpha = Math.min(1, tw * 0.6 * I.alpha);
-            this.ctx.fillRect(x - size, y, 1, 1);
-            this.ctx.fillRect(x + size, y, 1, 1);
-            this.ctx.fillRect(x, y - size, 1, 1);
-            this.ctx.fillRect(x, y + size, 1, 1);
-            this.ctx.globalAlpha = 1;
+        const totalCount = Math.max(800, Math.round(((w * h) / 2500) * I.count)); // significantly more stars
+        const armStarRatio = 0.6; // 60% of stars in spiral arms, 40% background
+        const armStarCount = Math.round(totalCount * armStarRatio);
+        const backgroundStarCount = totalCount - armStarCount;
+        
+        // Draw spiral arm stars
+        for (let i = 0; i < armStarCount; i++) {
+            this.drawArmStar(i, currentTime, w, h, cx, cy, tilt, armCount, pitch, baseRadius, rotBase, rotGain, I);
+        }
+        
+        // Draw background stars between arms
+        for (let i = 0; i < backgroundStarCount; i++) {
+            this.drawBackgroundStar(i + armStarCount, currentTime, w, h, cx, cy, tilt, baseRadius, rotBase, rotGain, I);
         }
 
-        // Nebula-like soft glow along arms
-        const armGlow = this.ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.1, cx, cy, Math.max(w, h));
-        armGlow.addColorStop(0, `rgba(255, 230, 200, ${0.06 + 0.06 * I.alpha})`);
-        armGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        this.ctx.fillStyle = armGlow;
+        // Subtle nebula glow from center - adjusted scale
+        const nebulaGlow = this.ctx.createRadialGradient(
+            cx, cy, Math.min(w, h) * 0.2, 
+            cx, cy, Math.max(w, h) * 1.5
+        );
+        nebulaGlow.addColorStop(0, `rgba(210, 225, 245, ${0.06 + 0.07 * I.alpha})`); // brighter for visibility
+        nebulaGlow.addColorStop(0.7, `rgba(170, 190, 220, ${0.03 + 0.04 * I.alpha})`);
+        nebulaGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        this.ctx.fillStyle = nebulaGlow;
         this.ctx.fillRect(0, 0, w, h);
 
-        // Peripheral cool tint
-        const cool = this.ctx.createRadialGradient(w * 0.7, h * 0.35, Math.min(w, h) * 0.2, w * 0.7, h * 0.35, Math.max(w, h));
-        cool.addColorStop(0, `rgba(120, 150, 255, ${0.035 + 0.045 * I.alpha})`);
-        cool.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        this.ctx.fillStyle = cool;
-        this.ctx.fillRect(0, 0, w, h);
+        // Subtle spiral arm density enhancements
+        for (let arm = 0; arm < armCount; arm++) {
+            const armAngle = (arm / armCount) * Math.PI * 2 + currentTime * 0.008;
+            const armX = cx + Math.cos(armAngle) * baseRadius * 0.8;
+            const armY = cy + Math.sin(armAngle) * baseRadius * 0.8 * tilt;
+            
+            const armGlow = this.ctx.createRadialGradient(
+                armX, armY, 20,
+                armX, armY, baseRadius * 0.6
+            );
+            armGlow.addColorStop(0, `rgba(230, 240, 255, ${0.03 + 0.04 * I.alpha})`); // brighter for visibility
+            armGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            this.ctx.fillStyle = armGlow;
+            this.ctx.fillRect(0, 0, w, h);
+        }
 
         this.ctx.restore();
+    }
+
+    drawArmStar(i, currentTime, w, h, cx, cy, tilt, armCount, pitch, baseRadius, rotBase, rotGain, I) {
+        // Seeds
+        const seed = (i * 16807) % 2147483647;
+        const r01 = ((seed ^ 0x9e3779b9) & 0xffff) / 0xffff; // 0..1
+        const r02 = ((seed * 48271) % 2147483647) / 2147483647;
+
+        // Radial distance - distribute across all visible area
+        const radius = 40 + Math.pow(r01, 0.8) * baseRadius;
+
+        // Distance from center (for size and rotation calculations)
+        const distanceFromCenter = radius;
+        const maxVisibleDistance = baseRadius;
+        const normalizedDistance = Math.min(1, distanceFromCenter / maxVisibleDistance);
+
+        // Assign to an arm and compute spiral angle
+        const arm = i % armCount;
+        const armOffset = (arm / armCount) * Math.PI * 2;
+        
+        // Moderate spiral for visible but not sharp arms
+        const spiralTheta = armOffset + pitch * Math.log(1 + radius * 0.7);
+
+        // Slower differential rotation - closer stars rotate moderately faster
+        const proximityFactor = 1 - normalizedDistance; // closer = higher value
+        const angSpeed = rotBase + rotGain * Math.pow(proximityFactor, 1.0);
+        const rotation = currentTime * angSpeed;
+
+        // Moderate randomness to make arms subtle but visible
+        const armRandomness = this.noise11(currentTime * 0.15, i * 0.1) * (0.12 + 0.2 * normalizedDistance);
+        const positionRandomness = r02 * 0.4;
+        const theta = spiralTheta + rotation + armRandomness + positionRandomness;
+
+        // Position with moderate inclination - stars distributed across screen
+        const x = cx + Math.cos(theta) * radius;
+        const y = cy + Math.sin(theta) * radius * tilt;
+
+        // Render stars across the entire visible area
+        if (x < -40 || x > w + 40 || y < -40 || y > h + 40) return;
+
+        // Size based on proximity to center - slightly smaller stars
+        const baseSizeFromProximity = 0.6 + proximityFactor * 2.0; // slightly reduced base size
+        const randomSizeVariation = 0.5 + (i % 12) * 0.12; // more variation with smaller range
+        const size = Math.max(0.4, baseSizeFromProximity * randomSizeVariation * I.size * 0.9); // 10% smaller
+
+        // Enhanced twinkling - brighter and more dynamic
+        const twinkleSpeed = 0.8 + proximityFactor * 1.5; // faster twinkling
+        const twinkleIntensity = 0.4 + proximityFactor * 0.6; // much brighter twinkling
+        const twinkle = 0.5 + twinkleIntensity * this.noise01(currentTime * twinkleSpeed, i * 7 + radius * 0.002);
+
+        // Color: subtle variation, closer stars slightly warmer
+        const hue = Math.round(185 + proximityFactor * 35 + (i % 11) * 1.5);
+        const sat = 25 + Math.round(proximityFactor * 25);
+        const lum = 60 + Math.round(proximityFactor * 25); // brighter base luminosity
+        const alpha = twinkle * (0.6 + proximityFactor * 0.4); // brighter alpha
+        
+        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
+
+        // Draw star with subtle cross pattern
+        this.ctx.fillRect(x - size/2, y - size/2, size, size);
+        
+        // Add subtle cross pattern for larger stars
+        if (size > 1.0) { // adjusted threshold for cross pattern
+            this.ctx.globalAlpha = alpha * 0.6; // brighter cross
+            const crossSize = size * 1.1; // cross size
+            this.ctx.fillRect(x - crossSize, y - 0.3, crossSize * 2, 0.6);
+            this.ctx.fillRect(x - 0.3, y - crossSize, 0.6, crossSize * 2);
+            this.ctx.globalAlpha = 1;
+        }
+    }
+
+    drawBackgroundStar(i, currentTime, w, h, cx, cy, tilt, baseRadius, rotBase, rotGain, I) {
+        // Seeds
+        const seed = (i * 23456) % 2147483647; // Different seed pattern for background stars
+        const r01 = ((seed ^ 0x12345678) & 0xffff) / 0xffff; // 0..1
+        const r02 = ((seed * 67890) % 2147483647) / 2147483647;
+
+        // More uniform radial distribution for background stars
+        const radius = 60 + Math.pow(r01, 0.6) * baseRadius * 0.9; // Slightly different distribution
+
+        // Distance from center (for size and rotation calculations)
+        const distanceFromCenter = radius;
+        const maxVisibleDistance = baseRadius;
+        const normalizedDistance = Math.min(1, distanceFromCenter / maxVisibleDistance);
+
+        // Random angle - not tied to spiral arms
+        const randomAngle = r02 * Math.PI * 2;
+        
+        // Slower differential rotation - closer stars rotate moderately faster
+        const proximityFactor = 1 - normalizedDistance; // closer = higher value
+        const angSpeed = rotBase + rotGain * Math.pow(proximityFactor, 0.8); // Slightly different rotation
+        const rotation = currentTime * angSpeed;
+
+        // More random positioning for background stars
+        const backgroundRandomness = this.noise11(currentTime * 0.1, i * 0.15) * 0.3;
+        const theta = randomAngle + rotation + backgroundRandomness;
+
+        // Position with moderate inclination - stars distributed across screen
+        const x = cx + Math.cos(theta) * radius;
+        const y = cy + Math.sin(theta) * radius * tilt;
+
+        // Render stars across the entire visible area
+        if (x < -40 || x > w + 40 || y < -40 || y > h + 40) return;
+
+        // Background stars are generally smaller and dimmer
+        const baseSizeFromProximity = 0.4 + proximityFactor * 1.5; // smaller than arm stars
+        const randomSizeVariation = 0.4 + (i % 15) * 0.08; // more variation, smaller range
+        const size = Math.max(0.3, baseSizeFromProximity * randomSizeVariation * I.size * 0.8); // 20% smaller
+
+        // Dimmer twinkling for background stars
+        const twinkleSpeed = 0.6 + proximityFactor * 1.2; // slightly slower twinkling
+        const twinkleIntensity = 0.3 + proximityFactor * 0.4; // dimmer twinkling
+        const twinkle = 0.4 + twinkleIntensity * this.noise01(currentTime * twinkleSpeed, i * 5 + radius * 0.001);
+
+        // Color: cooler colors for background stars
+        const hue = Math.round(200 + proximityFactor * 25 + (i % 13) * 1.2);
+        const sat = 20 + Math.round(proximityFactor * 20);
+        const lum = 45 + Math.round(proximityFactor * 20); // dimmer base luminosity
+        const alpha = twinkle * (0.4 + proximityFactor * 0.3); // dimmer alpha
+        
+        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
+
+        // Draw star (no cross pattern for background stars to keep them subtle)
+        this.ctx.fillRect(x - size/2, y - size/2, size, size);
     }
 
     drawRainEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        this.ctx.globalAlpha = 0.35 + 0.45 * I.alpha;
-        this.ctx.strokeStyle = 'rgba(200, 200, 255, 0.35)';
-        const drops = Math.max(30, Math.round(((w*h) / 12000) * I.count));
-        const wind = this.noise11(currentTime * 0.3, 5) * 120; // px/s lateral
-        for (let i = 0; i < drops; i++) {
-            const seed = i * 97;
-            const len = (10 + this.noise01(currentTime * 0.9, seed) * 16) * I.size;
-            const thickness = 0.6 + this.noise01(currentTime * 1.1, seed * 1.7) * 1.2;
-            const fallSpeed = 220 + this.noise01(currentTime * 0.5, seed * 2.3) * 260; // px/s
-            const baseX = (i * 53) % (w + 200) - 100;
-            const baseY = (i * 131) % (h + 200) - 100;
-            const sway = this.noise11(currentTime * 2.2, seed * 0.7) * 10; // local curvature
-            const t = (currentTime + (seed % 1000) / 997) % 1000;
-            const x = (baseX + (t * (wind + 300)) % (w + 200)) - 100 + sway;
-            const y = (baseY + (t * fallSpeed) % (h + 200)) - 100;
-            const dx = -len * (0.4 + this.noise01(currentTime, seed) * 0.5);
-            const dy = len;
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, y);
-            this.ctx.lineTo(x + dx, y + dy);
-            this.ctx.lineWidth = Math.max(0.7, thickness);
-            this.ctx.stroke();
-        }
+        
+        // Rain parameters
+        const dropCount = Math.max(80, Math.round(((w * h) / 8000) * I.count));
+        const wind = this.noise11(currentTime * 0.2, 5) * 80; // gentler wind
+        
+        // Draw atmospheric mist/fog first (background layer)
+        this.drawRainAtmosphere(currentTime, w, h, I);
+        
+        // Draw rain drops in multiple layers for depth
+        this.drawRainLayer(currentTime, w, h, I, dropCount * 0.3, 0.3, 180, wind * 0.5); // Far layer
+        this.drawRainLayer(currentTime, w, h, I, dropCount * 0.5, 0.6, 250, wind * 0.7); // Middle layer  
+        this.drawRainLayer(currentTime, w, h, I, dropCount * 0.2, 1.0, 320, wind); // Close layer
+        
+        // Draw splash effects on ground
+        this.drawRainSplashes(currentTime, w, h, I);
+        
         this.ctx.restore();
     }
+    
+    drawRainAtmosphere(currentTime, w, h, I) {
+        // Create subtle atmospheric haze
+        const atmosphereGradient = this.ctx.createLinearGradient(0, 0, 0, h);
+        atmosphereGradient.addColorStop(0, `rgba(220, 230, 240, ${0.02 + 0.03 * I.alpha})`);
+        atmosphereGradient.addColorStop(0.7, `rgba(200, 210, 220, ${0.04 + 0.06 * I.alpha})`);
+        atmosphereGradient.addColorStop(1, `rgba(180, 190, 200, ${0.06 + 0.08 * I.alpha})`);
+        
+        this.ctx.fillStyle = atmosphereGradient;
+        this.ctx.fillRect(0, 0, w, h);
+        
+        // Add moving mist patches
+        for (let i = 0; i < 5; i++) {
+            const seed = i * 123;
+            const mistX = ((seed * 67) % (w + 400)) - 200 + currentTime * (10 + i * 5);
+            const mistY = ((seed * 89) % (h + 200)) - 100;
+            const mistSize = 100 + (i * 50);
+            
+            const mistGradient = this.ctx.createRadialGradient(
+                mistX % (w + 400) - 200, mistY, 0,
+                mistX % (w + 400) - 200, mistY, mistSize
+            );
+            mistGradient.addColorStop(0, `rgba(240, 245, 250, ${0.03 + 0.04 * I.alpha})`);
+            mistGradient.addColorStop(1, 'rgba(240, 245, 250, 0)');
+            
+            this.ctx.fillStyle = mistGradient;
+            this.ctx.fillRect(0, 0, w, h);
+        }
+    }
+    
+    drawRainLayer(currentTime, w, h, I, dropCount, opacity, fallSpeed, wind) {
+        for (let i = 0; i < dropCount; i++) {
+            const seed = i * 97 + fallSpeed;
+            const dropSize = 0.8 + this.noise01(currentTime * 0.8, seed) * 2.5;
+            const dropLength = 8 + dropSize * 4;
+            
+            // Drop position with cycling
+            const baseX = (seed * 53) % (w + 300) - 150;
+            const baseY = (seed * 131) % (h + 300) - 150;
+            const t = (currentTime + (seed % 1000) / 997) % 1000;
+            
+            // Wind effect and natural sway
+            const windEffect = wind + this.noise11(currentTime * 0.5, seed) * 20;
+            const sway = this.noise11(currentTime * 1.5, seed * 0.3) * 8;
+            
+            const x = (baseX + t * windEffect) % (w + 300) - 150 + sway;
+            const y = (baseY + t * fallSpeed) % (h + 300) - 150;
+            
+            // Skip if outside visible area
+            if (x < -20 || x > w + 20 || y < -20 || y > h + 20) continue;
+            
+            // Drop transparency and color
+            const dropAlpha = (0.4 + 0.6 * this.noise01(currentTime * 2, seed)) * opacity * I.alpha;
+            
+            // Draw teardrop shape
+            this.ctx.save();
+            this.ctx.globalAlpha = dropAlpha;
+            
+            // Drop body (ellipse)
+            this.ctx.fillStyle = `rgba(220, 230, 240, ${0.8})`;
+            this.ctx.beginPath();
+            this.ctx.ellipse(x, y, dropSize * 0.6, dropLength * 0.5, Math.PI * 0.1, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Drop highlight (makes it look wet and reflective)
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${0.6})`;
+            this.ctx.beginPath();
+            this.ctx.ellipse(x - dropSize * 0.2, y - dropLength * 0.2, dropSize * 0.3, dropLength * 0.2, Math.PI * 0.1, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Drop tail (streak effect)
+            this.ctx.strokeStyle = `rgba(200, 215, 230, ${0.5})`;
+            this.ctx.lineWidth = Math.max(0.5, dropSize * 0.3);
+            this.ctx.lineCap = 'round';
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y - dropLength * 0.3);
+            this.ctx.lineTo(x + windEffect * 0.1, y - dropLength);
+            this.ctx.stroke();
+            
+            this.ctx.restore();
+        }
+    }
+    
+    drawRainSplashes(currentTime, w, h, I) {
+        const splashCount = Math.max(15, Math.round(((w * h) / 15000) * I.count));
+        
+        for (let i = 0; i < splashCount; i++) {
+            const seed = i * 157;
+            const splashX = (seed * 73) % w;
+            const splashY = h - 20 - this.noise01(currentTime, seed) * 40; // Near bottom
+            
+            // Splash timing (appears and disappears quickly)
+            const splashTime = (currentTime * 3 + (seed % 100) / 100) % 2;
+            if (splashTime > 0.3) continue; // Short-lived splashes
+            
+            const splashAlpha = (0.3 - splashTime) * I.alpha;
+            const splashSize = 2 + this.noise01(currentTime * 4, seed) * 4;
+            
+            this.ctx.save();
+            this.ctx.globalAlpha = splashAlpha;
+            
+            // Draw splash particles
+            for (let j = 0; j < 6; j++) {
+                const angle = (j / 6) * Math.PI * 2;
+                const distance = splashSize * (0.5 + splashTime * 2);
+                const particleX = splashX + Math.cos(angle) * distance;
+                const particleY = splashY + Math.sin(angle) * distance * 0.3; // Flatter splash
+                
+                this.ctx.fillStyle = `rgba(200, 220, 240, ${0.7})`;
+                this.ctx.beginPath();
+                this.ctx.arc(particleX, particleY, 0.5 + splashTime, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+            
+            // Central splash
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${0.8})`;
+            this.ctx.beginPath();
+            this.ctx.arc(splashX, splashY, splashSize * 0.5, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            this.ctx.restore();
+        }
+        
+        // Add water accumulation effect at bottom
+        const waterGradient = this.ctx.createLinearGradient(0, h - 30, 0, h);
+        waterGradient.addColorStop(0, 'rgba(180, 200, 220, 0)');
+        waterGradient.addColorStop(1, `rgba(160, 180, 200, ${0.1 + 0.15 * I.alpha})`);
+        
+        this.ctx.fillStyle = waterGradient;
+        this.ctx.fillRect(0, h - 30, w, 30);
+    }
 
+    // Realistic clouds effect with distinct cloud formations and natural shapes
     drawCloudsEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        const layers = 3;
-        for (let i = 0; i < layers; i++) {
-            const alpha = (0.06 + i * 0.05) * I.alpha;
-            this.ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-            const count = Math.max(3, Math.round((12 - i * 3) * I.count));
-            for (let j = 0; j < count; j++) {
-                const r = (w + h) * (0.035 + i*0.02) * (0.6 + this.noise01(currentTime*0.7, j+i*17)*0.9) * I.size;
-                const nx = this.noise11(currentTime * (0.03 + i*0.02), j * 13 + i*7);
-                const ny = this.noise11(currentTime * (0.025 + i*0.015), j * 19 + i*11);
-                const x = nx * (w*0.55) + w/2;
-                const y = ny * (h*0.4) + h/2;
-                this.ctx.beginPath();
-                this.ctx.arc(x, y, r, 0, Math.PI * 2);
-                this.ctx.fill();
-            }
-        }
-        // slight bluish tint
-        this.ctx.fillStyle = `rgba(180, 200, 255, ${0.04 + 0.04 * I.alpha})`;
+        
+        // Sky gradient background
+        const skyGradient = this.ctx.createLinearGradient(0, 0, 0, h);
+        skyGradient.addColorStop(0, `rgba(135, 206, 235, ${0.1 + 0.15 * I.alpha})`); // Sky blue
+        skyGradient.addColorStop(0.7, `rgba(176, 224, 230, ${0.05 + 0.1 * I.alpha})`); // Powder blue
+        skyGradient.addColorStop(1, `rgba(220, 240, 250, ${0.02 + 0.05 * I.alpha})`); // Very light blue
+        this.ctx.fillStyle = skyGradient;
         this.ctx.fillRect(0, 0, w, h);
+        
+        // Draw multiple cloud layers
+        this.drawCloudFormations(currentTime, w, h, I, 0.4, 8, 'background'); // Far clouds
+        this.drawCloudFormations(currentTime, w, h, I, 0.7, 12, 'middle'); // Middle clouds
+        this.drawCloudFormations(currentTime, w, h, I, 1.0, 18, 'foreground'); // Close clouds
+        
         this.ctx.restore();
+    }
+
+    drawCloudFormations(currentTime, w, h, I, depthFactor, speed, layer) {
+        const cloudCount = Math.max(2, Math.round(5 * I.count * depthFactor));
+        
+        for (let i = 0; i < cloudCount; i++) {
+            const seed = i * 137 + layer.charCodeAt(0) * 1000;
+            
+            // Cloud position with slow movement
+            const baseX = (seed * 73) % (w + 600) - 300;
+            const baseY = (seed * 97) % (h * 0.6); // Keep clouds in upper 60% of screen
+            const driftX = currentTime * speed * (0.8 + (seed % 5) * 0.1);
+            const driftY = this.noise11(currentTime * 0.02, seed + 200) * 15;
+            
+            const cloudX = (baseX + driftX) % (w + 600) - 300;
+            const cloudY = baseY + driftY;
+            
+            // Cloud size based on depth
+            const baseSize = (120 + (seed % 180)) * depthFactor * I.size;
+            const sizeVariation = 0.8 + this.noise01(currentTime * 0.01, seed) * 0.4;
+            const cloudSize = baseSize * sizeVariation;
+            
+            // Generate cloud shape using noise-based approach
+            this.drawRealisticCloud(cloudX, cloudY, cloudSize, seed, currentTime, depthFactor, I);
+        }
+    }
+
+    drawRealisticCloud(centerX, centerY, size, seed, currentTime, depthFactor, I) {
+        // Cloud properties
+        const segments = 32; // Number of points to define cloud outline
+        const points = [];
+        const baseRadius = size * 0.5;
+        
+        // Generate cloud outline using noise
+        for (let i = 0; i < segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            const noiseValue = this.noise01(
+                Math.cos(angle) * 0.5 + currentTime * 0.005, 
+                Math.sin(angle) * 0.5 + seed * 0.001
+            );
+            
+            // Create fluffy, irregular cloud shape
+            const radiusVariation = 0.6 + noiseValue * 0.8;
+            const radius = baseRadius * radiusVariation;
+            
+            // Add some larger bumps for cloud puffiness
+            const bumpNoise = this.noise01(
+                Math.cos(angle * 3) * 0.3 + currentTime * 0.003,
+                Math.sin(angle * 3) * 0.3 + seed * 0.002
+            );
+            const bumpRadius = radius * (1 + bumpNoise * 0.4);
+            
+            const x = centerX + Math.cos(angle) * bumpRadius;
+            const y = centerY + Math.sin(angle) * bumpRadius * 0.7; // Flatten vertically
+            
+            points.push({ x, y });
+        }
+        
+        // Draw cloud with multiple layers for depth
+        this.drawCloudLayers(points, centerX, centerY, size, depthFactor, I);
+    }
+
+    drawCloudLayers(points, centerX, centerY, size, depthFactor, I) {
+        // Cloud shadow (bottom layer)
+        this.ctx.globalAlpha = (0.15 + 0.1 * depthFactor) * I.alpha;
+        this.ctx.fillStyle = 'rgba(100, 120, 140, 0.8)';
+        this.drawCloudShape(points, 2, 4); // Offset shadow
+        
+        // Main cloud body
+        this.ctx.globalAlpha = (0.7 + 0.2 * depthFactor) * I.alpha;
+        this.ctx.fillStyle = `rgba(240, 248, 255, ${0.85 + 0.1 * depthFactor})`;
+        this.drawCloudShape(points, 0, 0);
+        
+        // Cloud highlights (top layer)
+        this.ctx.globalAlpha = (0.4 + 0.3 * depthFactor) * I.alpha;
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        
+        // Create highlight shape (upper portion of cloud)
+        const highlightPoints = points.map((point, i) => {
+            const angle = (i / points.length) * Math.PI * 2;
+            const isTop = Math.sin(angle) < 0.3; // Upper portion
+            const shrinkFactor = isTop ? 0.7 : 0.3;
+            
+            return {
+                x: centerX + (point.x - centerX) * shrinkFactor,
+                y: centerY + (point.y - centerY) * shrinkFactor - size * 0.1
+            };
+        });
+        
+        this.drawCloudShape(highlightPoints, 0, 0);
+        
+        // Reset alpha
+        this.ctx.globalAlpha = 1;
+    }
+
+    drawCloudShape(points, offsetX, offsetY) {
+        if (points.length < 3) return;
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(points[0].x + offsetX, points[0].y + offsetY);
+        
+        // Use quadratic curves for smooth cloud edges
+        for (let i = 1; i < points.length; i++) {
+            const current = points[i];
+            const next = points[(i + 1) % points.length];
+            
+            // Control point for smooth curve
+            const controlX = current.x + offsetX;
+            const controlY = current.y + offsetY;
+            const endX = (current.x + next.x) / 2 + offsetX;
+            const endY = (current.y + next.y) / 2 + offsetY;
+            
+            this.ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+        }
+        
+        // Close the path back to start
+        const firstPoint = points[0];
+        const lastPoint = points[points.length - 1];
+        const controlX = lastPoint.x + offsetX;
+        const controlY = lastPoint.y + offsetY;
+        const endX = firstPoint.x + offsetX;
+        const endY = firstPoint.y + offsetY;
+        
+        this.ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+        this.ctx.closePath();
+        this.ctx.fill();
     }
 
     drawSubtitles(currentTime, canvasWidth, canvasHeight) {
@@ -873,7 +1571,6 @@ class VideoGenerator {
         const url = URL.createObjectURL(file);
         
         this.elements.audioElement.src = url;
-        this.elements.audioFileName.textContent = file.name;
         this.elements.audioPlayer.style.display = 'block';
         
         // Автоматически определяем длительность видео по аудио
@@ -1332,6 +2029,13 @@ class VideoGenerator {
             this.elements.generateVideo.querySelector('.btn-text').textContent = 'Генерировать видео';
             this.elements.generateVideo.querySelector('.loading-spinner').style.display = 'none';
             this.elements.progress.style.display = 'none';
+            
+            this.showNotification('Генерация остановлена', 'warning');
+
+            // Clear canvas to avoid perceived frame accumulation
+            try {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            } catch {}
         }
     }
 
@@ -1380,7 +2084,7 @@ class VideoGenerator {
     }
 
     renderVideoFrame(sortedImages, currentTime, canvasWidth, canvasHeight) {
-        // Find current image based on timestamp (same logic as preview)
+        // Keep preview rendering identical to video rendering
         let currentImage = sortedImages[0];
         for (let i = sortedImages.length - 1; i >= 0; i--) {
             if (currentTime >= sortedImages[i].timestamp) {
@@ -1437,6 +2141,8 @@ class VideoGenerator {
         this.ctx.imageSmoothingEnabled = true;
         this.ctx.imageSmoothingQuality = 'high';
         this.ctx.globalAlpha = 1;
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
         this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
         this.ctx.restore();
     }
@@ -1640,13 +2346,23 @@ class VideoGenerator {
     }
 
     async loadProjectFromJSON(data) {
-        if (!data || !data.settings) throw new Error('Invalid project');
+        if (!data) {
+            console.warn('Empty project data, using defaults');
+            data = { settings: { name: 'Проект' } };
+        }
+        if (!data.settings) {
+            console.warn('Missing settings in project data, using defaults');
+            data.settings = { name: 'Проект' };
+        }
+        
         // Reset current state
         this.resetProject();
+        
         // Set project
         this.currentProject = data.settings.name || 'Проект';
         this.elements.currentProject.style.display = 'block';
         this.elements.projectTitle.textContent = this.currentProject;
+        
         // Settings
         if (this.elements.videoDuration) {
             this.videoDuration = parseInt(data.settings.duration || 30, 10);
@@ -1671,6 +2387,7 @@ class VideoGenerator {
         }
         this.onSettingsChanged();
         this.updateTimeDisplay();
+        
         // Audio
         if (data.audio?.dataUrl) {
             const audioBlob = this.dataURLToBlob(data.audio.dataUrl);
@@ -1678,8 +2395,8 @@ class VideoGenerator {
             const audioUrl = URL.createObjectURL(this.audioFile);
             this.elements.audioElement.src = audioUrl;
             this.elements.audioPlayer.style.display = 'block';
-            this.elements.audioFileName.textContent = this.audioFile.name;
         }
+        
         // Images
         this.images = [];
         if (Array.isArray(data.images)) {
@@ -1695,15 +2412,19 @@ class VideoGenerator {
                 });
             }
         }
+        
         // Subtitles
         this.subtitles = Array.isArray(data.subtitles) ? data.subtitles.map(s => ({ id: s.id || (Date.now()+Math.random()), text: s.text || '', start: s.start || 0, duration: s.duration || 3 })) : [];
+        
         // UI updates
         this.renderImageList();
         this.renderSubtitleList();
         this.updateTimeline();
+        
         // Render an initial preview frame to show images/effects/subtitles after load
         this.previewCurrentTime = 0;
         this.renderPreviewFrame(0);
+        
         this.updateGenerateButton();
     }
 
