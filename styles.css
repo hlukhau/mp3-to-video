@@ -710,3 +710,37 @@ section h2 {
 .mt-20 {
     margin-top: 20px;
 }
+
+/* Animation Checkbox Styles */
+.animation-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.animation-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #667eea;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.checkbox-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.animation-checkbox:hover .checkbox-label {
+    color: #667eea;
+}
+
+.animation-checkbox input[type="checkbox"]:checked + .checkbox-label {
+    color: #667eea;
+    font-weight: 600;
+}

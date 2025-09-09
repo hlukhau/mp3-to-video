@@ -16,6 +16,7 @@ class VideoGenerator {
         this.ctx = null;
         this.videoFrameCache = new Map(); // Cache for extracted video frames
         this.lastRenderedFrame = null; // Cache last rendered frame to reduce flickering
+        this.backgroundFrameCache = new Map(); // Cache for background frames before video starts
         
         this.initializeElements();
         this.bindEvents();
@@ -1532,7 +1533,8 @@ class VideoGenerator {
                         timestampDisplay: this.formatTime(defaultTime),
                         element: img,
                         width: img.naturalWidth,
-                        height: img.naturalHeight
+                        height: img.naturalHeight,
+                        animated: true // По умолчанию включена анимация (плавание по экрану)
                     };
                     
                     this.mediaItems.push(imageData);
@@ -1688,10 +1690,24 @@ class VideoGenerator {
                 durationInfo = `<span class="duration-info">${this.formatTime(item.duration)}</span>`;
             }
             
+            // Animation checkbox only for images
+            let animationCheckbox = '';
+            if (item.type === 'image') {
+                animationCheckbox = `
+                    <label class="animation-checkbox">
+                        <input type="checkbox" 
+                               ${item.animated ? 'checked' : ''} 
+                               onchange="videoGen.toggleImageAnimation('${item.id}', this.checked)">
+                        <span class="checkbox-label">Плыть по экрану</span>
+                    </label>
+                `;
+            }
+            
             mediaItem.innerHTML = `
                 ${previewHtml}
                 <div class="media-info">
                     <div class="media-name">${typeIcon} ${item.name} ${durationInfo}</div>
+                    ${animationCheckbox}
                     <input type="text" 
                            class="timestamp-input" 
                            value="${this.formatTime(item.timestamp)}" 
@@ -1727,6 +1743,17 @@ class VideoGenerator {
             
             this.elements.mediaList.appendChild(mediaItem);
         });
+    }
+
+    toggleImageAnimation(itemId, animated) {
+        const item = this.mediaItems.find(item => item.id === itemId);
+        if (item && item.type === 'image') {
+            item.animated = animated; // Это должно быть boolean значение
+            this.showNotification(
+                animated ? 'Анимация включена - картинка будет плыть по экрану' : 'Анимация отключена - картинка будет статичной',
+                'info'
+            );
+        }
     }
 
     removeMediaItem(itemId) {
@@ -2302,6 +2329,41 @@ class VideoGenerator {
             }
         }
         
+        // Find the background media item (last suitable item before current video)
+        let backgroundMediaItem = null;
+        if (currentMediaItem && currentMediaItem.type === 'video') {
+            // Look for the most suitable background item
+            // Priority: 1) Last image, 2) Last video with frames
+            let lastImage = null;
+            let lastVideoWithFrames = null;
+            
+            for (let i = sortedMediaItems.length - 1; i >= 0; i--) {
+                const item = sortedMediaItems[i];
+                if (item.timestamp < currentMediaItem.timestamp) {
+                    if (item.type === 'image' && !lastImage) {
+                        lastImage = item;
+                    } else if (item.type === 'video' && !lastVideoWithFrames) {
+                        // Check if this video has cached frames
+                        const frames = this.videoFrameCache.get(item.id);
+                        if (frames && frames.length > 0) {
+                            lastVideoWithFrames = item;
+                        }
+                    }
+                    
+                    // If we found both types, prefer image
+                    if (lastImage) {
+                        backgroundMediaItem = lastImage;
+                        break;
+                    }
+                }
+            }
+            
+            // If no image found, use the last video with frames
+            if (!backgroundMediaItem && lastVideoWithFrames) {
+                backgroundMediaItem = lastVideoWithFrames;
+            }
+        }
+
         // Only clear and redraw if we have a media item to avoid unnecessary flashing
         if (currentMediaItem) {
             // Clear canvas first
@@ -2312,7 +2374,7 @@ class VideoGenerator {
             if (currentMediaItem.type === 'image') {
                 this.drawAnimatedImage(currentMediaItem, currentTime, canvasWidth, canvasHeight);
             } else if (currentMediaItem.type === 'video') {
-                this.drawVideoFrame(currentMediaItem, currentTime, canvasWidth, canvasHeight);
+                this.drawVideoFrameWithBackground(currentMediaItem, backgroundMediaItem, currentTime, canvasWidth, canvasHeight);
             }
         } else {
             // Just fill with black if no media item
@@ -2330,30 +2392,43 @@ class VideoGenerator {
 
     drawAnimatedImage(imageData, currentTime, canvasWidth, canvasHeight) {
         const img = imageData.element;
-        
-        // Calculate scale to make image larger than canvas (cover effect)
+
+        // Check if animation is enabled for this image
+        const isAnimated = imageData.animated !== false; // Default to true if not specified
+
+        // Calculate scale to fit image to canvas (cover effect)
         const scaleX = canvasWidth / img.naturalWidth;
         const scaleY = canvasHeight / img.naturalHeight;
-        const baseScale = Math.max(scaleX, scaleY) * 1.15; // 15% larger than needed to cover
-        
-        // Very subtle and smooth scale animation
-        const scaleVariation = 0.02 * Math.sin(currentTime * 0.2); // Much slower and smaller variation
-        const scale = baseScale * (1 + scaleVariation);
-        
-        const scaledWidth = img.naturalWidth * scale;
-        const scaledHeight = img.naturalHeight * scale;
-        
-        // Calculate movement range to keep image covering the canvas
-        const maxMoveX = Math.max(0, (scaledWidth - canvasWidth) / 2);
-        const maxMoveY = Math.max(0, (scaledHeight - canvasHeight) / 2);
-        
-        // Very subtle and smooth movement using different frequencies
-        const moveX = maxMoveX * 0.15 * Math.sin(currentTime * 0.1); // Much slower movement
-        const moveY = maxMoveY * 0.15 * Math.cos(currentTime * 0.13); // Slightly different frequency
-        
+        const scale = Math.max(scaleX, scaleY);
+
+        let moveX = 0;
+        let moveY = 0;
+        let currentScale = scale;
+
+        // Apply animation only if enabled
+        if (isAnimated) {
+            // Very subtle and smooth scale animation
+            const scaleVariation = 0.02 * Math.sin(currentTime * 0.2);
+            currentScale = scale * (1 + scaleVariation);
+
+            const scaledWidth = img.naturalWidth * currentScale;
+            const scaledHeight = img.naturalHeight * currentScale;
+
+            // Calculate movement range to keep image covering the canvas
+            const maxMoveX = Math.max(0, (scaledWidth - canvasWidth) / 2);
+            const maxMoveY = Math.max(0, (scaledHeight - canvasHeight) / 2);
+
+            // Very subtle and smooth movement using different frequencies
+            moveX = maxMoveX * 0.15 * Math.sin(currentTime * 0.1);
+            moveY = maxMoveY * 0.15 * Math.cos(currentTime * 0.13);
+        }
+
+        const scaledWidth = img.naturalWidth * currentScale;
+        const scaledHeight = img.naturalHeight * currentScale;
+
         const x = (canvasWidth - scaledWidth) / 2 + moveX;
         const y = (canvasHeight - scaledHeight) / 2 + moveY;
-        
+
         // Draw image with smooth transitions and anti-aliasing
         this.ctx.save();
         this.ctx.imageSmoothingEnabled = true;
@@ -2363,6 +2438,57 @@ class VideoGenerator {
         this.ctx.shadowBlur = 0;
         this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
         this.ctx.restore();
+    }
+
+    drawStaticImage(img, canvasWidth, canvasHeight) {
+        // Calculate scale to fit image exactly to canvas (no extra scaling for animation)
+        const scaleX = canvasWidth / img.naturalWidth;
+        const scaleY = canvasHeight / img.naturalHeight;
+        const scale = Math.max(scaleX, scaleY); // Fit to cover canvas exactly
+        
+        const scaledWidth = img.naturalWidth * scale;
+        const scaledHeight = img.naturalHeight * scale;
+        
+        // Center the image (no movement)
+        const x = (canvasWidth - scaledWidth) / 2;
+        const y = (canvasHeight - scaledHeight) / 2;
+        
+        // Draw image statically
+        this.ctx.save();
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
+        this.ctx.globalAlpha = 1;
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
+        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        this.ctx.restore();
+    }
+
+    drawVideoFrameWithBackground(videoData, backgroundMediaItem, currentTime, canvasWidth, canvasHeight) {
+        // First, draw the background if available
+        if (backgroundMediaItem) {
+            this.ctx.save();
+            this.ctx.globalAlpha = 0.8; // Slightly transparent background
+            
+            if (backgroundMediaItem.type === 'image') {
+                // Draw the background image statically (no animation for backgrounds)
+                this.drawStaticImage(backgroundMediaItem.element, canvasWidth, canvasHeight);
+            } else if (backgroundMediaItem.type === 'video') {
+                // Use the last frame of the background video
+                const bgFrames = this.videoFrameCache.get(backgroundMediaItem.id);
+                if (bgFrames && bgFrames.length > 0) {
+                    const lastFrame = bgFrames[bgFrames.length - 1];
+                    if (lastFrame.image && lastFrame.image.complete && lastFrame.image.naturalWidth > 0) {
+                        this.drawScaledVideoFrame(lastFrame.image, canvasWidth, canvasHeight);
+                    }
+                }
+            }
+            
+            this.ctx.restore();
+        }
+        
+        // Then draw the video frame on top
+        this.drawVideoFrame(videoData, currentTime, canvasWidth, canvasHeight);
     }
 
     drawVideoFrame(videoData, currentTime, canvasWidth, canvasHeight) {
@@ -2406,8 +2532,8 @@ class VideoGenerator {
             }
         }
         
-        // Draw the cached frame
-        this.drawFrameFromDataUrl(closestFrame.dataUrl, canvasWidth, canvasHeight, closestFrame.image);
+        // Draw the cached frame without clearing background
+        this.drawFrameFromDataUrlWithBackground(closestFrame.dataUrl, canvasWidth, canvasHeight, closestFrame.image);
     }
 
     drawFrameFromDataUrl(dataUrl, canvasWidth, canvasHeight, preloadedImage = null) {
@@ -2421,6 +2547,17 @@ class VideoGenerator {
         // This prevents flickering from async image loading
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        console.warn('No pre-loaded image available for video frame');
+    }
+
+    drawFrameFromDataUrlWithBackground(dataUrl, canvasWidth, canvasHeight, preloadedImage = null) {
+        // Always use pre-loaded image if available - no fallbacks to avoid flickering
+        if (preloadedImage && preloadedImage.complete && preloadedImage.naturalWidth > 0) {
+            this.drawScaledVideoFrameWithBackground(preloadedImage, canvasWidth, canvasHeight);
+            return;
+        }
+        
+        // If no pre-loaded image, don't clear background - let it show through
         console.warn('No pre-loaded image available for video frame');
     }
 
@@ -2456,6 +2593,41 @@ class VideoGenerator {
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         
+        // Draw the image with pixel-perfect rendering
+        this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        
+        this.ctx.restore();
+    }
+
+    drawScaledVideoFrameWithBackground(img, canvasWidth, canvasHeight) {
+        // Calculate scaling to fit the frame within the canvas while maintaining aspect ratio
+        const imgAspect = img.naturalWidth / img.naturalHeight;
+        const canvasAspect = canvasWidth / canvasHeight;
+        
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        if (imgAspect > canvasAspect) {
+            // Image is wider than canvas - fit to width
+            drawWidth = canvasWidth;
+            drawHeight = canvasWidth / imgAspect;
+            drawX = 0;
+            drawY = (canvasHeight - drawHeight) / 2;
+        } else {
+            // Image is taller than canvas - fit to height
+            drawHeight = canvasHeight;
+            drawWidth = canvasHeight * imgAspect;
+            drawX = (canvasWidth - drawWidth) / 2;
+            drawY = 0;
+        }
+        
+        // Use more efficient rendering approach
+        this.ctx.save();
+        
+        // Enable high-quality rendering for smoother video
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
+        
+        // Don't clear the canvas - preserve background
         // Draw the image with pixel-perfect rendering
         this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
         
@@ -2730,7 +2902,8 @@ class VideoGenerator {
                         timestamp: item.timestamp || 0,
                         timestampDisplay: this.formatTime(item.timestamp || 0),
                         width: imageEl.naturalWidth,
-                        height: imageEl.naturalHeight
+                        height: imageEl.naturalHeight,
+                        animated: item.animated !== false // Восстанавливаем настройку анимации (по умолчанию true)
                     });
                 } else if (item.type === 'video') {
                     // For saved video items, restore from cached frames
@@ -2789,7 +2962,8 @@ class VideoGenerator {
                     timestamp: im.timestamp || 0,
                     timestampDisplay: this.formatTime(im.timestamp || 0),
                     width: imageEl.naturalWidth,
-                    height: imageEl.naturalHeight
+                    height: imageEl.naturalHeight,
+                    animated: im.animated !== false // Восстанавливаем настройку анимации (по умолчанию true)
                 });
             }
         }
@@ -2821,7 +2995,8 @@ class VideoGenerator {
                 type: 'image',
                 dataUrl: srcDataUrl,
                 width: itemData.width,
-                height: itemData.height
+                height: itemData.height,
+                animated: itemData.animated !== false // Сохраняем настройку анимации
             };
         } else if (itemData.type === 'video') {
             // For video items, save all cached frames for restoration
