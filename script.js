@@ -728,7 +728,7 @@ class VideoGenerator {
     drawStarsEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        const count = Math.max(40, Math.round(((w * h) / 16000) * I.count));
+        const count = Math.max(40, Math.round(((w * h) / 10000) * I.count));
         for (let i = 0; i < count; i++) {
             // Slower gentle drift
             const vx = (this.noise11(currentTime * 0.08, i * 3) * 8) + 2 * (i % 3);
@@ -1091,146 +1091,276 @@ class VideoGenerator {
         this.ctx.save();
         const I = this.getIntensityScales();
         
-        // Sky gradient background
-        const skyGradient = this.ctx.createLinearGradient(0, 0, 0, h);
-        skyGradient.addColorStop(0, `rgba(135, 206, 235, ${0.1 + 0.15 * I.alpha})`); // Sky blue
-        skyGradient.addColorStop(0.7, `rgba(176, 224, 230, ${0.05 + 0.1 * I.alpha})`); // Powder blue
-        skyGradient.addColorStop(1, `rgba(220, 240, 250, ${0.02 + 0.05 * I.alpha})`); // Very light blue
-        this.ctx.fillStyle = skyGradient;
+        // Dark atmospheric background for smoke
+        const smokeGradient = this.ctx.createLinearGradient(0, 0, 0, h);
+        smokeGradient.addColorStop(0, `rgba(20, 20, 25, ${0.08 + 0.12 * I.alpha})`); // Dark top
+        smokeGradient.addColorStop(0.5, `rgba(35, 30, 30, ${0.06 + 0.10 * I.alpha})`); // Mid tone
+        smokeGradient.addColorStop(1, `rgba(45, 40, 35, ${0.04 + 0.08 * I.alpha})`); // Warmer bottom
+        this.ctx.fillStyle = smokeGradient;
         this.ctx.fillRect(0, 0, w, h);
         
-        // Draw multiple cloud layers
-        this.drawCloudFormations(currentTime, w, h, I, 0.4, 8, 'background'); // Far clouds
-        this.drawCloudFormations(currentTime, w, h, I, 0.7, 12, 'middle'); // Middle clouds
-        this.drawCloudFormations(currentTime, w, h, I, 1.0, 18, 'foreground'); // Close clouds
+        // Draw multiple smoke layers with swirling motion
+        this.drawSmokeFormations(currentTime, w, h, I, 0.3, 15, 'background'); // Far smoke
+        this.drawSmokeFormations(currentTime, w, h, I, 0.6, 25, 'middle'); // Middle smoke
+        this.drawSmokeFormations(currentTime, w, h, I, 1.0, 35, 'foreground'); // Close smoke
+        
+        // Add ember particles floating in the smoke
+        this.drawSmokeEmbers(currentTime, w, h, I);
         
         this.ctx.restore();
     }
 
-    drawCloudFormations(currentTime, w, h, I, depthFactor, speed, layer) {
-        const cloudCount = Math.max(2, Math.round(5 * I.count * depthFactor));
+    drawSmokeFormations(currentTime, w, h, I, depthFactor, speed, layer) {
+        const smokeCount = Math.max(3, Math.round(8 * I.count * depthFactor));
         
-        for (let i = 0; i < cloudCount; i++) {
-            const seed = i * 137 + layer.charCodeAt(0) * 1000;
+        for (let i = 0; i < smokeCount; i++) {
+            const seed = i * 157 + layer.charCodeAt(0) * 1000;
             
-            // Cloud position with slow movement
-            const baseX = (seed * 73) % (w + 600) - 300;
-            const baseY = (seed * 97) % (h * 0.6); // Keep clouds in upper 60% of screen
-            const driftX = currentTime * speed * (0.8 + (seed % 5) * 0.1);
-            const driftY = this.noise11(currentTime * 0.02, seed + 200) * 15;
+            // Smoke position with turbulent swirling movement
+            const baseX = (seed * 73) % (w + 800) - 400;
+            const baseY = (seed * 97) % h; // Smoke can appear throughout the screen
             
-            const cloudX = (baseX + driftX) % (w + 600) - 300;
-            const cloudY = baseY + driftY;
+            // Complex swirling motion with multiple frequencies
+            const swirl1 = this.noise11(currentTime * 0.08, seed + 100) * 60;
+            const swirl2 = this.noise11(currentTime * 0.15, seed + 200) * 30;
+            const upwardDrift = currentTime * speed * (0.5 + (seed % 3) * 0.2);
+            const horizontalDrift = this.noise11(currentTime * 0.05, seed + 300) * 40;
             
-            // Cloud size based on depth
-            const baseSize = (120 + (seed % 180)) * depthFactor * I.size;
-            const sizeVariation = 0.8 + this.noise01(currentTime * 0.01, seed) * 0.4;
-            const cloudSize = baseSize * sizeVariation;
+            const smokeX = (baseX + horizontalDrift + swirl1) % (w + 800) - 400;
+            const smokeY = (baseY - upwardDrift + swirl2) % (h + 200) - 100;
             
-            // Generate cloud shape using noise-based approach
-            this.drawRealisticCloud(cloudX, cloudY, cloudSize, seed, currentTime, depthFactor, I);
+            // Smoke size with more variation and growth over time
+            const baseSize = (80 + (seed % 120)) * depthFactor * I.size;
+            const growthFactor = 1 + (currentTime * 0.02) % 2; // Smoke grows and dissipates
+            const turbulence = 0.7 + this.noise01(currentTime * 0.03, seed) * 0.6;
+            const smokeSize = baseSize * growthFactor * turbulence;
+            
+            // Generate swirling smoke shape
+            this.drawSwirlingSmoke(smokeX, smokeY, smokeSize, seed, currentTime, depthFactor, I);
         }
     }
 
-    drawRealisticCloud(centerX, centerY, size, seed, currentTime, depthFactor, I) {
-        // Cloud properties
-        const segments = 32; // Number of points to define cloud outline
+    drawSwirlingSmoke(centerX, centerY, size, seed, currentTime, depthFactor, I) {
+        // Smoke properties with more dynamic segments
+        const segments = 24; // Fewer segments for more organic smoke shapes
         const points = [];
-        const baseRadius = size * 0.5;
+        const baseRadius = size * 0.4;
         
-        // Generate cloud outline using noise
+        // Generate swirling smoke outline using turbulent noise
         for (let i = 0; i < segments; i++) {
             const angle = (i / segments) * Math.PI * 2;
-            const noiseValue = this.noise01(
-                Math.cos(angle) * 0.5 + currentTime * 0.005, 
-                Math.sin(angle) * 0.5 + seed * 0.001
+            
+            // Multi-layered noise for complex turbulence
+            const turbulence1 = this.noise01(
+                Math.cos(angle) * 0.8 + currentTime * 0.02, 
+                Math.sin(angle) * 0.8 + seed * 0.003
+            );
+            const turbulence2 = this.noise01(
+                Math.cos(angle * 2) * 0.4 + currentTime * 0.035,
+                Math.sin(angle * 2) * 0.4 + seed * 0.005
             );
             
-            // Create fluffy, irregular cloud shape
-            const radiusVariation = 0.6 + noiseValue * 0.8;
+            // Create wispy, irregular smoke shape with swirling motion
+            const radiusVariation = 0.3 + turbulence1 * 1.2 + turbulence2 * 0.6;
             const radius = baseRadius * radiusVariation;
             
-            // Add some larger bumps for cloud puffiness
-            const bumpNoise = this.noise01(
-                Math.cos(angle * 3) * 0.3 + currentTime * 0.003,
-                Math.sin(angle * 3) * 0.3 + seed * 0.002
-            );
-            const bumpRadius = radius * (1 + bumpNoise * 0.4);
+            // Add swirling distortion
+            const swirl = this.noise11(currentTime * 0.04, seed + angle * 10) * 0.8;
+            const distortedAngle = angle + swirl;
             
-            const x = centerX + Math.cos(angle) * bumpRadius;
-            const y = centerY + Math.sin(angle) * bumpRadius * 0.7; // Flatten vertically
+            // Vertical stretching for smoke-like appearance
+            const x = centerX + Math.cos(distortedAngle) * radius;
+            const y = centerY + Math.sin(distortedAngle) * radius * (0.4 + turbulence1 * 0.8);
             
             points.push({ x, y });
         }
         
-        // Draw cloud with multiple layers for depth
-        this.drawCloudLayers(points, centerX, centerY, size, depthFactor, I);
+        // Draw smoke with multiple layers for atmospheric depth
+        this.drawSmokeLayers(points, centerX, centerY, size, depthFactor, I, currentTime, seed);
     }
 
-    drawCloudLayers(points, centerX, centerY, size, depthFactor, I) {
-        // Cloud shadow (bottom layer)
-        this.ctx.globalAlpha = (0.15 + 0.1 * depthFactor) * I.alpha;
-        this.ctx.fillStyle = 'rgba(100, 120, 140, 0.8)';
-        this.drawCloudShape(points, 2, 4); // Offset shadow
+    drawSmokeLayers(points, centerX, centerY, size, depthFactor, I, currentTime, seed) {
+        // Smoke base layer (darkest, most opaque)
+        this.ctx.globalAlpha = (0.25 + 0.15 * depthFactor) * I.alpha;
+        const baseGray = 40 + (seed % 30);
+        this.ctx.fillStyle = `rgba(${baseGray}, ${baseGray - 5}, ${baseGray - 10}, 0.9)`;
+        this.drawSmokeShape(points, 0, 0);
         
-        // Main cloud body
-        this.ctx.globalAlpha = (0.7 + 0.2 * depthFactor) * I.alpha;
-        this.ctx.fillStyle = `rgba(240, 248, 255, ${0.85 + 0.1 * depthFactor})`;
-        this.drawCloudShape(points, 0, 0);
+        // Smoke mid layer with slight color variation
+        this.ctx.globalAlpha = (0.18 + 0.12 * depthFactor) * I.alpha;
+        const midGray = 60 + (seed % 25);
+        const warmth = this.noise01(currentTime * 0.02, seed) * 20;
+        this.ctx.fillStyle = `rgba(${midGray + warmth * 0.3}, ${midGray}, ${midGray - warmth * 0.2}, 0.7)`;
         
-        // Cloud highlights (top layer)
-        this.ctx.globalAlpha = (0.4 + 0.3 * depthFactor) * I.alpha;
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        // Create slightly smaller mid layer with swirl offset
+        const swirlOffset = this.noise11(currentTime * 0.03, seed) * 8;
+        const midPoints = points.map(point => ({
+            x: point.x + swirlOffset,
+            y: point.y + swirlOffset * 0.5
+        }));
+        this.drawSmokeShape(midPoints, 0, 0);
         
-        // Create highlight shape (upper portion of cloud)
-        const highlightPoints = points.map((point, i) => {
-            const angle = (i / points.length) * Math.PI * 2;
-            const isTop = Math.sin(angle) < 0.3; // Upper portion
-            const shrinkFactor = isTop ? 0.7 : 0.3;
-            
+        // Smoke wispy outer layer (lightest, most transparent)
+        this.ctx.globalAlpha = (0.08 + 0.07 * depthFactor) * I.alpha;
+        const lightGray = 80 + (seed % 20);
+        this.ctx.fillStyle = `rgba(${lightGray}, ${lightGray + 5}, ${lightGray + 10}, 0.5)`;
+        
+        // Create expanded wispy layer
+        const wispyPoints = points.map((point, i) => {
+            const expansionFactor = 1.3 + this.noise01(currentTime * 0.025, seed + i) * 0.4;
             return {
-                x: centerX + (point.x - centerX) * shrinkFactor,
-                y: centerY + (point.y - centerY) * shrinkFactor - size * 0.1
+                x: centerX + (point.x - centerX) * expansionFactor,
+                y: centerY + (point.y - centerY) * expansionFactor
             };
         });
+        this.drawSmokeShape(wispyPoints, 0, 0);
         
-        this.drawCloudShape(highlightPoints, 0, 0);
+        // Add internal swirls and eddies
+        this.drawSmokeSwirls(centerX, centerY, size, depthFactor, I, currentTime, seed);
         
         // Reset alpha
         this.ctx.globalAlpha = 1;
     }
 
-    drawCloudShape(points, offsetX, offsetY) {
+    drawSmokeShape(points, offsetX, offsetY) {
         if (points.length < 3) return;
         
         this.ctx.beginPath();
         this.ctx.moveTo(points[0].x + offsetX, points[0].y + offsetY);
         
-        // Use quadratic curves for smooth cloud edges
-        for (let i = 1; i < points.length; i++) {
+        // Use bezier curves for more organic, flowing smoke edges
+        for (let i = 0; i < points.length; i++) {
             const current = points[i];
             const next = points[(i + 1) % points.length];
+            const nextNext = points[(i + 2) % points.length];
             
-            // Control point for smooth curve
-            const controlX = current.x + offsetX;
-            const controlY = current.y + offsetY;
-            const endX = (current.x + next.x) / 2 + offsetX;
-            const endY = (current.y + next.y) / 2 + offsetY;
+            // Create smooth flowing curves with more organic control points
+            const cp1x = current.x + (next.x - current.x) * 0.5 + offsetX;
+            const cp1y = current.y + (next.y - current.y) * 0.5 + offsetY;
+            const cp2x = next.x + (current.x - nextNext.x) * 0.3 + offsetX;
+            const cp2y = next.y + (current.y - nextNext.y) * 0.3 + offsetY;
             
-            this.ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+            this.ctx.bezierCurveTo(
+                cp1x, cp1y,
+                cp2x, cp2y,
+                next.x + offsetX, next.y + offsetY
+            );
         }
         
-        // Close the path back to start
-        const firstPoint = points[0];
-        const lastPoint = points[points.length - 1];
-        const controlX = lastPoint.x + offsetX;
-        const controlY = lastPoint.y + offsetY;
-        const endX = firstPoint.x + offsetX;
-        const endY = firstPoint.y + offsetY;
-        
-        this.ctx.quadraticCurveTo(controlX, controlY, endX, endY);
         this.ctx.closePath();
         this.ctx.fill();
+    }
+
+    drawSmokeSwirls(centerX, centerY, size, depthFactor, I, currentTime, seed) {
+        // Draw internal swirls and eddies within the smoke
+        const swirlCount = Math.max(2, Math.round(4 * depthFactor));
+        
+        for (let i = 0; i < swirlCount; i++) {
+            const swirlSeed = seed + i * 100;
+            const angle = (i / swirlCount) * Math.PI * 2 + currentTime * 0.05;
+            const distance = (size * 0.3) * (0.4 + this.noise01(currentTime * 0.02, swirlSeed) * 0.6);
+            
+            const swirlX = centerX + Math.cos(angle) * distance;
+            const swirlY = centerY + Math.sin(angle) * distance * 0.6;
+            const swirlSize = size * 0.15 * (0.5 + this.noise01(currentTime * 0.03, swirlSeed) * 0.5);
+            
+            // Create spiral pattern
+            this.ctx.globalAlpha = (0.1 + 0.05 * depthFactor) * I.alpha;
+            this.ctx.strokeStyle = `rgba(30, 25, 20, 0.6)`;
+            this.ctx.lineWidth = Math.max(1, swirlSize * 0.1);
+            
+            this.ctx.beginPath();
+            const spiralTurns = 2;
+            const steps = 20;
+            
+            for (let step = 0; step <= steps; step++) {
+                const t = step / steps;
+                const spiralAngle = t * spiralTurns * Math.PI * 2 + currentTime * 0.1;
+                const spiralRadius = swirlSize * (1 - t) * (0.8 + this.noise01(currentTime * 0.04, swirlSeed + step) * 0.4);
+                
+                const x = swirlX + Math.cos(spiralAngle) * spiralRadius;
+                const y = swirlY + Math.sin(spiralAngle) * spiralRadius * 0.7;
+                
+                if (step === 0) {
+                    this.ctx.moveTo(x, y);
+                } else {
+                    this.ctx.lineTo(x, y);
+                }
+            }
+            
+            this.ctx.stroke();
+        }
+    }
+
+    drawSmokeEmbers(currentTime, w, h, I) {
+        // Add glowing ember particles floating in the smoke
+        const emberCount = Math.max(8, Math.round(25 * I.count));
+        
+        for (let i = 0; i < emberCount; i++) {
+            const seed = i * 97;
+            
+            // Ember position with slow upward drift and horizontal sway
+            const baseX = (seed * 73) % (w + 200) - 100;
+            const baseY = (seed * 131) % (h + 200) - 100;
+            const upwardDrift = currentTime * (15 + (seed % 10));
+            const sway = this.noise11(currentTime * 0.1, seed) * 30;
+            
+            const emberX = (baseX + sway) % (w + 200) - 100;
+            const emberY = (baseY - upwardDrift) % (h + 200) - 100;
+            
+            // Skip if outside visible area
+            if (emberX < -20 || emberX > w + 20 || emberY < -20 || emberY > h + 20) continue;
+            
+            // Ember properties
+            const emberSize = (0.8 + this.noise01(currentTime * 0.5, seed) * 1.5) * I.size;
+            const glow = 0.6 + this.noise01(currentTime * 2, seed) * 0.4;
+            const heat = this.noise01(currentTime * 0.3, seed);
+            
+            // Color varies from deep red to bright orange-yellow
+            const red = Math.round(180 + heat * 75);
+            const green = Math.round(60 + heat * 120);
+            const blue = Math.round(20 + heat * 40);
+            
+            // Draw ember glow
+            this.ctx.globalAlpha = (0.3 + 0.2 * glow) * I.alpha;
+            const glowGradient = this.ctx.createRadialGradient(
+                emberX, emberY, 0,
+                emberX, emberY, emberSize * 4
+            );
+            glowGradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0.8)`);
+            glowGradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
+            
+            this.ctx.fillStyle = glowGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(emberX, emberY, emberSize * 4, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Draw ember core
+            this.ctx.globalAlpha = (0.8 + 0.2 * glow) * I.alpha;
+            this.ctx.fillStyle = `rgba(${Math.min(255, red + 30)}, ${Math.min(255, green + 20)}, ${Math.min(255, blue + 10)}, 1)`;
+            this.ctx.beginPath();
+            this.ctx.arc(emberX, emberY, emberSize, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Add occasional spark trails
+            if (this.noise01(currentTime * 0.8, seed) > 0.7) {
+                this.ctx.globalAlpha = (0.4 + 0.3 * glow) * I.alpha;
+                this.ctx.strokeStyle = `rgba(${red}, ${Math.max(0, green - 20)}, ${Math.max(0, blue - 10)}, 0.7)`;
+                this.ctx.lineWidth = Math.max(0.5, emberSize * 0.3);
+                this.ctx.lineCap = 'round';
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(emberX, emberY);
+                this.ctx.lineTo(
+                    emberX + this.noise11(currentTime * 1.5, seed) * 8,
+                    emberY + 6 + this.noise01(currentTime * 1.2, seed) * 4
+                );
+                this.ctx.stroke();
+            }
+        }
+        
+        // Reset alpha
+        this.ctx.globalAlpha = 1;
     }
 
     drawSubtitles(currentTime, canvasWidth, canvasHeight) {
