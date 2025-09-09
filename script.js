@@ -1668,19 +1668,19 @@ class VideoGenerator {
 
     renderMediaList() {
         this.elements.mediaList.innerHTML = '';
-        
+
         // Sort media items by timestamp before rendering
         const sortedItems = [...this.mediaItems].sort((a, b) => a.timestamp - b.timestamp);
-        
+
         sortedItems.forEach((item, index) => {
             const mediaItem = document.createElement('div');
             mediaItem.className = 'media-item fade-in';
-            
+
             // Different display for images vs videos
             let previewHtml = '';
             let typeIcon = '';
             let durationInfo = '';
-            
+
             if (item.type === 'image') {
                 previewHtml = `<img src="${item.src}" alt="${item.name}" class="media-preview">`;
                 typeIcon = '🖼️';
@@ -1689,37 +1689,45 @@ class VideoGenerator {
                 typeIcon = '🎬';
                 durationInfo = `<span class="duration-info">${this.formatTime(item.duration)}</span>`;
             }
-            
+
             // Animation checkbox only for images
             let animationCheckbox = '';
             if (item.type === 'image') {
                 animationCheckbox = `
                     <label class="animation-checkbox">
-                        <input type="checkbox" 
-                               ${item.animated ? 'checked' : ''} 
-                               onchange="videoGen.toggleImageAnimation('${item.id}', this.checked)">
+                        <input type="checkbox"
+                               ${item.animated ? 'checked' : ''}
+                               data-id="${item.id}">
                         <span class="checkbox-label">Плыть по экрану</span>
                     </label>
                 `;
             }
-            
+
             mediaItem.innerHTML = `
                 ${previewHtml}
                 <div class="media-info">
                     <div class="media-name">${typeIcon} ${item.name} ${durationInfo}</div>
                     ${animationCheckbox}
-                    <input type="text" 
-                           class="timestamp-input" 
-                           value="${this.formatTime(item.timestamp)}" 
+                    <input type="text"
+                           class="timestamp-input"
+                           value="${this.formatTime(item.timestamp)}"
                            placeholder="MM:SS"
                            pattern="[0-9]{1,2}:[0-9]{2}"
                            title="Формат: MM:SS (например, 01:30)">
-                    <button class="remove-media" onclick="videoGen.removeMediaItem('${item.id}')">
+                    <button class="remove-media" data-id="${item.id}">
                         Удалить
                     </button>
                 </div>
             `;
-            
+
+            // Добавляем обработчик для чекбокса
+            if (item.type === 'image') {
+                const checkbox = mediaItem.querySelector('input[type="checkbox"]');
+                checkbox.addEventListener('change', (e) => {
+                    this.toggleImageAnimation(item.id, e.target.checked);
+                });
+            }
+
             const timestampInput = mediaItem.querySelector('.timestamp-input');
             timestampInput.addEventListener('change', (e) => {
                 const newTime = this.parseTime(e.target.value);
@@ -1734,15 +1742,56 @@ class VideoGenerator {
                     this.showNotification(`Время не может превышать ${this.formatTime(this.videoDuration)}`, 'warning');
                 }
             });
-            
+
             // Format input on blur
             timestampInput.addEventListener('blur', (e) => {
                 const time = this.parseTime(e.target.value);
                 e.target.value = this.formatTime(time);
             });
-            
+
+            // Добавляем обработчик для кнопки удаления
+            const removeButton = mediaItem.querySelector('.remove-media');
+            removeButton.addEventListener('click', (e) => {
+                const itemId = e.target.getAttribute('data-id');
+                this.removeMediaItem(itemId);
+            });
+
             this.elements.mediaList.appendChild(mediaItem);
         });
+    }
+
+    // В методе toggleImageAnimation - исправить обновление объекта:
+    toggleImageAnimation(itemId, animated) {
+        const item = this.mediaItems.find(item => item.id === itemId);
+        if (item && item.type === 'image') {
+            item.animated = animated;
+            this.showNotification(
+                animated ? 'Анимация включена - картинка будет плыть по экрану' : 'Анимация отключена - картинка будет статичной',
+                'info'
+            );
+        }
+    }
+
+    // В методе removeMediaItem - исправить получение ID:
+    removeMediaItem(itemId) {
+        const index = this.mediaItems.findIndex(item => item.id === itemId);
+        if (index !== -1) {
+            const item = this.mediaItems[index];
+
+            // Clean up video resources
+            if (item.type === 'video') {
+                this.videoFrameCache.delete(itemId);
+                if (item.src && item.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(item.src);
+                }
+            }
+
+            this.mediaItems.splice(index, 1);
+            this.renderMediaList();
+            this.updateTimeline();
+            this.renderSubtitleList();
+            this.updateGenerateButton();
+        }
     }
 
     toggleImageAnimation(itemId, animated) {
