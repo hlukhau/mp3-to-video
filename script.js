@@ -2511,8 +2511,17 @@ class VideoGenerator {
             // Добавляем обработчик для кнопки удаления
             const removeButton = mediaItem.querySelector('.remove-media');
             removeButton.addEventListener('click', (e) => {
-                const itemId = e.target.getAttribute('data-id');
-                this.removeMediaItem(itemId);
+                e.preventDefault();
+                e.stopPropagation();
+                // Получаем ID из кнопки или из ближайшего элемента с data-id
+                const itemId = e.target.getAttribute('data-id') || e.currentTarget.getAttribute('data-id');
+                console.log('Remove button clicked, itemId:', itemId);
+                if (itemId) {
+                    this.removeMediaItem(itemId);
+                } else {
+                    console.error('No itemId found for remove button');
+                    this.showNotification('Ошибка: не удалось определить файл для удаления', 'error');
+                }
             });
 
             this.elements.mediaList.appendChild(mediaItem);
@@ -2531,15 +2540,30 @@ class VideoGenerator {
         }
     }
 
-    // В методе removeMediaItem - исправить получение ID:
     removeMediaItem(itemId) {
-        const index = this.mediaItems.findIndex(item => item.id === itemId);
+        console.log('Attempting to remove media item with ID:', itemId, 'type:', typeof itemId);
+        console.log('Current mediaItems:', this.mediaItems.map(item => ({id: item.id, type: typeof item.id, name: item.name})));
+        
+        // Преобразуем itemId в число, если это строка с числом
+        const numericId = typeof itemId === 'string' ? parseFloat(itemId) : itemId;
+        const stringId = String(itemId);
+        
+        // Ищем элемент, сравнивая как числовые, так и строковые ID
+        const index = this.mediaItems.findIndex(item => 
+            item.id === itemId || 
+            item.id === numericId || 
+            String(item.id) === stringId
+        );
+        
+        console.log('Found item at index:', index);
+        
         if (index !== -1) {
             const item = this.mediaItems[index];
+            console.log('Removing item:', item);
 
             // Clean up video resources
             if (item.type === 'video') {
-                this.videoFrameCache.delete(itemId);
+                this.videoFrameCache.delete(item.id);
                 if (item.src && item.src.startsWith('blob:')) {
                     URL.revokeObjectURL(item.src);
                 }
@@ -2550,38 +2574,22 @@ class VideoGenerator {
             this.updateTimeline();
             this.renderSubtitleList();
             this.updateGenerateButton();
+            this.showNotification('Медиа файл удален', 'success');
+        } else {
+            console.error('Media item not found with ID:', itemId);
+            console.error('Available IDs:', this.mediaItems.map(item => item.id));
+            this.showNotification('Ошибка: файл не найден', 'error');
         }
     }
 
     toggleImageAnimation(itemId, animated) {
         const item = this.mediaItems.find(item => item.id === itemId);
         if (item && item.type === 'image') {
-            item.animated = animated; // Это должно быть boolean значение
+            item.animated = animated;
             this.showNotification(
                 animated ? 'Анимация включена - картинка будет плыть по экрану' : 'Анимация отключена - картинка будет статичной',
                 'info'
             );
-        }
-    }
-
-    removeMediaItem(itemId) {
-        const index = this.mediaItems.findIndex(item => item.id === itemId);
-        if (index !== -1) {
-            const item = this.mediaItems[index];
-            
-            // Clean up video resources
-            if (item.type === 'video') {
-                this.videoFrameCache.delete(itemId);
-                if (item.src && item.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(item.src);
-                }
-            }
-            
-            this.mediaItems.splice(index, 1);
-            this.renderMediaList();
-            this.updateTimeline();
-            this.renderSubtitleList();
-            this.updateGenerateButton();
         }
     }
 
