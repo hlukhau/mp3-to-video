@@ -125,9 +125,8 @@
                         <select id="videoEffect" class="select-field">
                             <option value="none">Без эффекта</option>
                             <option value="film">Старая пленка</option>
-                            <option value="film_marks">Пленка (кружки/стрелки)</option>
+                            <option value="film_marks">Полет стаи птиц</option>
                             <option value="rain">Дождь</option>
-                            <option value="clouds">Облака</option>
                             <option value="fireworks">Салют</option>
                             <option value="stars">Плывущие звезды</option>
                             <option value="galaxy">Звездное небо (галактика)</option>
@@ -136,6 +135,23 @@
                     <div class="setting-group">
                         <label for="effectIntensity">Насыщенность эффекта:</label>
                         <input id="effectIntensity" type="range" min="0" max="100" value="50" class="seeker">
+                    </div>
+                    <div class="setting-group">
+                        <label for="floatIntensity">Плавание изображений:</label>
+                        <select id="floatIntensity" class="select-field">
+                            <option value="1">Минимальное (1x)</option>
+                            <option value="1.5" selected>Умеренное (1.5x)</option>
+                            <option value="2">Активное (2x)</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label for="floatSpeed">Скорость плавания:</label>
+                        <select id="floatSpeed" class="select-field">
+                            <option value="0.5">Медленная</option>
+                            <option value="1" selected>Обычная</option>
+                            <option value="1.5">Быстрая</option>
+                            <option value="2">Очень быстрая</option>
+                        </select>
                     </div>
                     <div class="setting-group" style="flex:1 1 100%;">
                         <label for="copyrightText">Текст копирайта (необязательно):</label>

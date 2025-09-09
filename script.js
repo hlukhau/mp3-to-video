@@ -176,9 +176,6 @@ class VideoGenerator {
             case 'rain':
                 this.drawRainEffect(currentTime, w, h);
                 break;
-            case 'clouds':
-                this.drawCloudsEffect(currentTime, w, h);
-                break;
             case 'fireworks':
                 this.drawFireworksEffect(currentTime, w, h);
                 break;
@@ -203,6 +200,18 @@ class VideoGenerator {
         const size = 0.7 + (s / 100) * 0.8; // 0.7 .. 1.5
         const alpha = 0.5 + (s / 100) * 0.5; // 0.5 .. 1.0
         return { count, size, alpha };
+    }
+
+    // Floating animation helpers
+    getFloatIntensity() {
+        const val = parseFloat(this.elements?.floatIntensity?.value || '1.5');
+        if (!Number.isFinite(val)) return 1.5;
+        return Math.min(3, Math.max(0.5, val));
+    }
+    getFloatSpeed() {
+        const val = parseFloat(this.elements?.floatSpeed?.value || '1');
+        if (!Number.isFinite(val)) return 1;
+        return Math.min(3, Math.max(0.1, val));
     }
 
     // --- Lightweight noise helpers for chaotic motion (deterministic yet time-varying) ---
@@ -462,38 +471,474 @@ class VideoGenerator {
 
     drawFilmMarksEffect(currentTime, w, h) {
         this.ctx.save();
-        // subtle noise tint
         const I = this.getIntensityScales();
-        this.ctx.fillStyle = `rgba(255,255,255,${0.02 + 0.03 * I.alpha})`;
-        this.ctx.fillRect(0, 0, w, h);
-        // corner circles (registration marks)
-        this.ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        this.ctx.lineWidth = (1.5 + this.noise01(currentTime*1.7, 7) * 2) * I.size;
-        const r = Math.max(10, Math.min(w, h) * 0.04 * I.size);
-        const offset = r + 8;
-        const centers = [
-            [offset, offset],
-            [w - offset, offset],
-            [offset, h - offset],
-            [w - offset, h - offset]
-        ];
-        centers.forEach(([cx, cy], i) => {
-            const jitter = this.noise11(currentTime * 2.5, i * 19) * 2.2;
+        
+        // Рисуем стаю птиц
+        this.drawBirdFlock(currentTime, w, h, I);
+        
+        this.ctx.restore();
+    }
+
+    drawFilmScratches(currentTime, w, h, I) {
+        // Вертикальные царапины (основные)
+        const scratchCount = Math.max(8, Math.round(25 * I.count));
+        
+        for (let i = 0; i < scratchCount; i++) {
+            const seed = i * 47;
+            const scratchLife = (currentTime * (0.1 + (seed % 10) * 0.02)) % 4;
+            
+            if (scratchLife > 3) continue; // Царапина видна 3 из 4 секунд
+            
+            const x = (seed * 73) % w;
+            const scratchHeight = (0.4 + this.noise01(0, seed) * 0.6) * h;
+            const y1 = this.noise01(currentTime * 0.02, seed) * (h - scratchHeight);
+            const y2 = y1 + scratchHeight;
+            
+            // Разная интенсивность царапин
+            const intensity = 0.3 + this.noise01(0, seed) * 0.7;
+            const width = (0.3 + this.noise01(0, seed + 100) * 1.2) * I.size;
+            
+            this.ctx.globalAlpha = intensity * (0.6 + 0.4 * this.noise01(scratchLife * 2, seed)) * I.alpha;
+            this.ctx.strokeStyle = this.noise01(0, seed) > 0.5 ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)';
+            this.ctx.lineWidth = width;
+            this.ctx.lineCap = 'round';
+            
+            // Неровная царапина
             this.ctx.beginPath();
-            this.ctx.arc(cx + jitter, cy + jitter, r, 0, Math.PI * 2);
+            const segments = 8;
+            for (let s = 0; s <= segments; s++) {
+                const t = s / segments;
+                const y = y1 + (y2 - y1) * t;
+                const wobble = this.noise11(y * 0.01 + currentTime * 0.1, seed) * 3;
+                
+                if (s === 0) {
+                    this.ctx.moveTo(x + wobble, y);
+                } else {
+                    this.ctx.lineTo(x + wobble, y);
+                }
+            }
             this.ctx.stroke();
-        });
-        // arrows along edges
-        const arrowCount = Math.max(4, Math.round(8 * I.count));
-        this.ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-        for (let i = 0; i < arrowCount; i++) {
-            const t = (i / arrowCount + (currentTime * (0.07 + this.noise01(currentTime*0.3, i)*0.08))) % 1;
-            const x = 20 + t * (w - 40);
-            // top
-            this.drawArrow(x, 30, 0);
-            // bottom
-            this.drawArrow(w - x, h - 30, Math.PI);
         }
+        
+        // Горизонтальные царапины (редкие)
+        const hScratchCount = Math.max(2, Math.round(6 * I.count));
+        
+        for (let i = 0; i < hScratchCount; i++) {
+            const seed = i * 89 + 1000;
+            const scratchLife = (currentTime * 0.05 + (seed % 100) / 100) % 6;
+            
+            if (scratchLife > 2) continue;
+            
+            const y = (seed * 97) % h;
+            const scratchWidth = (0.2 + this.noise01(0, seed) * 0.6) * w;
+            const x1 = this.noise01(currentTime * 0.01, seed) * (w - scratchWidth);
+            const x2 = x1 + scratchWidth;
+            
+            this.ctx.globalAlpha = (0.4 + this.noise01(scratchLife, seed) * 0.4) * I.alpha;
+            this.ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+            this.ctx.lineWidth = (0.5 + this.noise01(0, seed) * 1) * I.size;
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(x1, y);
+            this.ctx.lineTo(x2, y + this.noise11(currentTime * 0.1, seed) * 2);
+            this.ctx.stroke();
+        }
+    }
+
+    drawFilmHairs(currentTime, w, h, I) {
+        const hairCount = Math.max(5, Math.round(15 * I.count));
+        
+        for (let i = 0; i < hairCount; i++) {
+            const seed = i * 127;
+            const hairLife = (currentTime * (0.3 + (seed % 5) * 0.1)) % 5;
+            
+            if (hairLife > 3) continue;
+            
+            const startX = (seed * 73) % w;
+            const startY = (seed * 97) % h;
+            const length = 20 + (seed % 60);
+            const curvature = this.noise11(0, seed) * Math.PI * 0.5;
+            
+            // Волосок изгибается
+            this.ctx.globalAlpha = (0.3 + this.noise01(hairLife * 2, seed) * 0.4) * I.alpha;
+            this.ctx.strokeStyle = 'rgba(50, 40, 30, 0.8)';
+            this.ctx.lineWidth = (0.3 + this.noise01(0, seed) * 0.7) * I.size;
+            this.ctx.lineCap = 'round';
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(startX, startY);
+            
+            // Рисуем изогнутый волосок
+            const segments = 6;
+            for (let s = 1; s <= segments; s++) {
+                const t = s / segments;
+                const angle = curvature * t + this.noise11(currentTime * 0.2 + t, seed) * 0.3;
+                const x = startX + Math.cos(angle) * length * t;
+                const y = startY + Math.sin(angle) * length * t;
+                this.ctx.lineTo(x, y);
+            }
+            this.ctx.stroke();
+        }
+    }
+
+    drawFilmStains(currentTime, w, h, I) {
+        const stainCount = Math.max(3, Math.round(8 * I.count));
+        
+        for (let i = 0; i < stainCount; i++) {
+            const seed = i * 211;
+            const stainLife = (currentTime * 0.02 + (seed % 100) / 100) % 10;
+            
+            if (stainLife > 7) continue;
+            
+            const x = (seed * 73) % w;
+            const y = (seed * 97) % h;
+            const size = (10 + (seed % 30)) * I.size;
+            
+            // Неровное пятно
+            this.ctx.globalAlpha = (0.1 + this.noise01(stainLife, seed) * 0.2) * I.alpha;
+            
+            const gradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+            gradient.addColorStop(0, 'rgba(80, 60, 40, 0.6)');
+            gradient.addColorStop(0.7, 'rgba(60, 50, 30, 0.3)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            this.ctx.fillStyle = gradient;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, size, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+    }
+
+    drawEmulsionDefects(currentTime, w, h, I) {
+        const defectCount = Math.max(10, Math.round(30 * I.count));
+        
+        for (let i = 0; i < defectCount; i++) {
+            const seed = i * 167;
+            const defectLife = (currentTime * (0.5 + (seed % 10) * 0.1)) % 3;
+            
+            const x = (seed * 73) % w;
+            const y = (seed * 97) % h;
+            const size = (1 + (seed % 4)) * I.size;
+            
+            // Мелкие темные точки эмульсии
+            this.ctx.globalAlpha = (0.4 + this.noise01(defectLife * 3, seed) * 0.3) * I.alpha;
+            this.ctx.fillStyle = 'rgba(30, 20, 10, 0.8)';
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, size, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+    }
+
+    drawFilmDust(currentTime, w, h, I) {
+        const dustCount = Math.max(20, Math.round(60 * I.count));
+        
+        for (let i = 0; i < dustCount; i++) {
+            const seed = i * 83;
+            const dustLife = (currentTime * (1 + (seed % 20) * 0.1)) % 2;
+            
+            const x = ((seed * 73) % (w + 100) + currentTime * (5 + (seed % 10))) % (w + 100) - 50;
+            const y = ((seed * 97) % (h + 100) + currentTime * (3 + (seed % 8))) % (h + 100) - 50;
+            const size = (0.5 + (seed % 10) * 0.2) * I.size;
+            
+            if (x < -10 || x > w + 10 || y < -10 || y > h + 10) continue;
+            
+            // Плавающая пыль
+            this.ctx.globalAlpha = (0.2 + this.noise01(dustLife * 4, seed) * 0.3) * I.alpha;
+            
+            const dustType = seed % 3;
+            switch (dustType) {
+                case 0: // Светлая пыль
+                    this.ctx.fillStyle = 'rgba(200, 190, 170, 0.7)';
+                    break;
+                case 1: // Темная пыль
+                    this.ctx.fillStyle = 'rgba(60, 50, 40, 0.8)';
+                    break;
+                default: // Цветная пыль
+                    this.ctx.fillStyle = 'rgba(120, 100, 80, 0.6)';
+            }
+            
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, size, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+    }
+
+    drawMajorDefects(currentTime, w, h, I) {
+        // Редкие большие дефекты
+        const defectChance = this.noise01(currentTime * 0.05, 777);
+        
+        if (defectChance > 0.85) {
+            const x = this.noise01(currentTime * 0.03, 123) * w;
+            const y = this.noise01(currentTime * 0.04, 456) * h;
+            const size = (15 + 25 * (defectChance - 0.85) / 0.15) * I.size;
+            
+            // Большое темное пятно (прожог или дыра)
+            this.ctx.globalAlpha = (0.6 + 0.4 * this.noise01(currentTime * 2, 789)) * I.alpha;
+            
+            const majorGradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+            majorGradient.addColorStop(0, 'rgba(20, 10, 5, 0.9)');
+            majorGradient.addColorStop(0.6, 'rgba(60, 40, 20, 0.7)');
+            majorGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            this.ctx.fillStyle = majorGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, size, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Неровные края дефекта
+            this.ctx.globalAlpha = 0.3 * I.alpha;
+            this.ctx.strokeStyle = 'rgba(100, 70, 40, 0.8)';
+            this.ctx.lineWidth = 1.5 * I.size;
+            
+            this.ctx.beginPath();
+            for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2;
+                const r = size * (0.8 + this.noise01(angle * 2, 999) * 0.4);
+                const px = x + Math.cos(angle) * r;
+                const py = y + Math.sin(angle) * r;
+                
+                if (i === 0) {
+                    this.ctx.moveTo(px, py);
+                } else {
+                    this.ctx.lineTo(px, py);
+                }
+            }
+            this.ctx.closePath();
+            this.ctx.stroke();
+        }
+    }
+
+    drawBirdFlock(currentTime, w, h, I) {
+        this.ctx.save();
+        
+        // Очень большая стая из точек
+        const flockSize = Math.max(150, Math.round(300 * I.count));
+        const time = currentTime * 0.4;
+        
+        // Множественные центры притяжения для хаотичности
+        const center1X = w * 0.3 + Math.sin(time * 0.4) * w * 0.4;
+        const center1Y = h * 0.4 + Math.cos(time * 0.3) * h * 0.3;
+        
+        const center2X = w * 0.7 + Math.cos(time * 0.6) * w * 0.3;
+        const center2Y = h * 0.6 + Math.sin(time * 0.5) * h * 0.25;
+        
+        // Общий дрейф стаи
+        const globalDriftX = Math.sin(time * 0.1) * w * 0.2;
+        const globalDriftY = Math.cos(time * 0.12) * h * 0.15;
+        
+        for (let i = 0; i < flockSize; i++) {
+            const seed = i * 23;
+            const individualTime = time + (seed % 200) * 0.005;
+            
+            // Убираем кольцевое расположение - случайная базовая позиция
+            const baseX = (seed * 73) % w;
+            const baseY = (seed * 97) % h;
+            
+            // Притяжение к центрам с разной силой для каждой точки
+            const attraction1 = 0.3 + 0.4 * this.noise01(seed, 100);
+            const attraction2 = 0.3 + 0.4 * this.noise01(seed, 200);
+            
+            // Хаотичное движение к центрам притяжения
+            const toCenter1X = (center1X - baseX) * attraction1 * 0.002;
+            const toCenter1Y = (center1Y - baseY) * attraction1 * 0.002;
+            
+            const toCenter2X = (center2X - baseX) * attraction2 * 0.002;
+            const toCenter2Y = (center2Y - baseY) * attraction2 * 0.002;
+            
+            // Сильная турбулентность и хаос
+            const chaosX = this.noise11(individualTime * 1.5, seed + 300) * 80 +
+                          this.noise11(individualTime * 0.8, seed + 400) * 40 +
+                          Math.sin(individualTime * 3 + seed) * 25;
+                          
+            const chaosY = this.noise11(individualTime * 1.3, seed + 500) * 80 +
+                          this.noise11(individualTime * 0.9, seed + 600) * 40 +
+                          Math.cos(individualTime * 2.5 + seed) * 25;
+            
+            // Финальная позиция точки
+            let x = baseX + toCenter1X + toCenter2X + chaosX + globalDriftX;
+            let y = baseY + toCenter1Y + toCenter2Y + chaosY + globalDriftY;
+            
+            // Оборачиваем точки по краям экрана
+            x = ((x % w) + w) % w;
+            y = ((y % h) + h) % h;
+            
+            // Мерцание точек
+            const flickerSpeed = 4 + (seed % 6);
+            const flicker = Math.sin(individualTime * flickerSpeed + seed) * 0.5 + 0.5;
+            const flickerIntensity = 0.3 + 0.7 * flicker;
+            
+            // Случайное исчезновение некоторых точек
+            const disappearChance = this.noise01(individualTime * 0.5, seed + 700);
+            if (disappearChance < 0.05) continue; // 5% точек случайно исчезают
+            
+            // Размер точки с вариацией
+            const baseSize = 1.5 + (seed % 5);
+            const sizeVariation = 1 + Math.sin(individualTime * 2 + seed) * 0.4;
+            const dotSize = baseSize * sizeVariation;
+            
+            // Базовая прозрачность с мерцанием
+            const baseAlpha = 0.4 + 0.6 * this.noise01(seed, 800);
+            const alpha = baseAlpha * flickerIntensity * I.alpha;
+            
+            // Разнообразные цвета точек
+            const colorVariation = seed % 3;
+            let fillColor, strokeColor;
+            
+            if (colorVariation === 0) {
+                fillColor = `rgba(20, 20, 30, ${alpha})`;
+                strokeColor = `rgba(255, 255, 255, ${alpha * 0.4})`;
+            } else if (colorVariation === 1) {
+                fillColor = `rgba(30, 25, 20, ${alpha})`;
+                strokeColor = `rgba(200, 220, 255, ${alpha * 0.3})`;
+            } else {
+                fillColor = `rgba(25, 30, 25, ${alpha})`;
+                strokeColor = `rgba(255, 240, 200, ${alpha * 0.35})`;
+            }
+            
+            this.ctx.fillStyle = fillColor;
+            this.ctx.strokeStyle = strokeColor;
+            this.ctx.lineWidth = 0.5;
+            
+            // Рисуем мерцающую точку
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, dotSize, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.stroke();
+        }
+        
+        this.ctx.restore();
+    }
+    
+    drawSimpleBird(x, y, size, wingBeat, direction, I) {
+        this.ctx.save();
+        this.ctx.translate(x, y);
+        this.ctx.rotate(direction);
+        
+        // Яркий черный цвет для хорошей видимости
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        this.ctx.lineWidth = 2;
+        
+        // Тело птицы (простой овал)
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 0, size, size * 0.6, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Голова
+        this.ctx.beginPath();
+        this.ctx.arc(size * 0.8, 0, size * 0.4, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Крылья (простые линии с анимацией)
+        this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+        this.ctx.lineWidth = 3;
+        
+        const wingAngle = wingBeat * 0.8;
+        const wingLength = size * 1.5;
+        
+        // Левое крыло
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 0.3, 0);
+        this.ctx.lineTo(-size * 0.3 + Math.cos(wingAngle + 0.5) * wingLength, 
+                         Math.sin(wingAngle + 0.5) * wingLength);
+        this.ctx.stroke();
+        
+        // Правое крыло
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 0.3, 0);
+        this.ctx.lineTo(-size * 0.3 + Math.cos(-wingAngle - 0.5) * wingLength, 
+                         Math.sin(-wingAngle - 0.5) * wingLength);
+        this.ctx.stroke();
+        
+        // Хвост
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 0.8, 0);
+        this.ctx.lineTo(-size * 1.3, -size * 0.2);
+        this.ctx.lineTo(-size * 1.3, size * 0.2);
+        this.ctx.closePath();
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        this.ctx.restore();
+    }
+    
+    drawBird(x, y, size, wingBeat, direction, I) {
+        this.ctx.save();
+        this.ctx.translate(x, y);
+        this.ctx.rotate(direction);
+        
+        // Более яркий и контрастный цвет птицы
+        this.ctx.fillStyle = `rgba(20, 20, 30, ${0.95 * I.alpha})`;
+        this.ctx.strokeStyle = `rgba(10, 10, 20, ${1.0 * I.alpha})`;
+        this.ctx.lineWidth = 2 * I.size;
+        
+        // Тело птицы (увеличенное)
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 0, size * 2.5, size * 1.2, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Голова (увеличенная)
+        this.ctx.beginPath();
+        this.ctx.arc(size * 2, 0, size * 0.9, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Крылья (анимированные и более заметные)
+        const wingSpread = wingBeat * Math.PI * 0.6 + Math.PI * 0.2;
+        const wingLength = size * 4;
+        
+        this.ctx.lineWidth = 3 * I.size;
+        
+        // Левое крыло
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 0.5, 0);
+        this.ctx.quadraticCurveTo(
+            -size * 0.5 + Math.cos(wingSpread) * wingLength,
+            Math.sin(wingSpread) * wingLength,
+            -size * 0.5 + Math.cos(wingSpread) * wingLength * 0.8,
+            Math.sin(wingSpread) * wingLength * 0.8
+        );
+        this.ctx.stroke();
+        
+        // Правое крыло
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 0.5, 0);
+        this.ctx.quadraticCurveTo(
+            -size * 0.5 + Math.cos(-wingSpread) * wingLength,
+            Math.sin(-wingSpread) * wingLength,
+            -size * 0.5 + Math.cos(-wingSpread) * wingLength * 0.8,
+            Math.sin(-wingSpread) * wingLength * 0.8
+        );
+        this.ctx.stroke();
+        
+        // Хвост (увеличенный)
+        this.ctx.lineWidth = 2 * I.size;
+        this.ctx.beginPath();
+        this.ctx.moveTo(-size * 2, 0);
+        this.ctx.lineTo(-size * 3.5, -size * 0.5);
+        this.ctx.lineTo(-size * 3.5, size * 0.5);
+        this.ctx.closePath();
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Добавим белую обводку для лучшей видимости
+        this.ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 * I.alpha})`;
+        this.ctx.lineWidth = 1;
+        
+        // Обводка тела
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 0, size * 2.5, size * 1.2, 0, 0, Math.PI * 2);
+        this.ctx.stroke();
+        
+        // Обводка головы
+        this.ctx.beginPath();
+        this.ctx.arc(size * 2, 0, size * 0.9, 0, Math.PI * 2);
+        this.ctx.stroke();
+        
         this.ctx.restore();
     }
 
@@ -517,170 +962,121 @@ class VideoGenerator {
     drawFireworksEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
-        const launchesPerSec = 0.5 + 1.5 * I.count;
-        const activeShells = Math.max(2, Math.round(3 + 3 * I.count));
-
-        for (let s = 0; s < activeShells; s++) {
-            const seed = s * 911;
-            const phase = (currentTime * launchesPerSec + this.noise01(seed * 0.37, 0)) % 1; // 0..1
-
-            // Launch phase (0..0.35), Burst phase (0.35..0.65), Ember phase (0.65..1)
-            const isLaunch = phase < 0.35;
-            const isBurst = phase >= 0.35 && phase < 0.65;
-            const isEmber = phase >= 0.65 && phase < 1.0;
-
-            // Launch position and target burst center
-            const launchX = this.noise01(currentTime * 0.05, seed) * (w * 0.8) + w * 0.1;
-            const targetX = this.noise01(currentTime * 0.12, seed * 1.7) * (w * 0.6) + w * 0.2;
-            const targetY = this.noise01(currentTime * 0.13, seed * 2.3) * (h * 0.35) + h * 0.08;
-
-            if (isLaunch) {
-                const t = phase / 0.35; // 0..1
-                const y = h - t * (h - targetY);
-                const x = launchX + (targetX - launchX) * (0.8 * t + 0.2 * t * t);
-                const glow = 0.6 + 0.4 * this.noise01(currentTime * 8, seed);
-
-                // Rocket core
-                this.ctx.globalAlpha = (0.8 * glow) * I.alpha;
-                this.ctx.fillStyle = 'rgba(255, 230, 150, 1)';
+        
+        // Создаем несколько салютов одновременно
+        const fireworkCount = Math.max(2, Math.round(4 * I.count));
+        
+        for (let i = 0; i < fireworkCount; i++) {
+            const seed = i * 123 + Math.floor(currentTime * 0.3) * 456;
+            const fireworkLife = (currentTime * 0.8 + (seed % 100) / 100) % 3; // Цикл 3 секунды
+            
+            // Позиция взрыва
+            const centerX = (seed * 73) % (w * 0.8) + w * 0.1;
+            const centerY = (seed * 97) % (h * 0.5) + h * 0.1;
+            
+            // Фаза салюта: 0-0.2 взрыв, 0.2-1.5 искры, 1.5-3 затухание
+            if (fireworkLife < 0.2) {
+                // Яркая вспышка взрыва
+                const flashIntensity = (0.2 - fireworkLife) / 0.2;
+                this.ctx.globalAlpha = flashIntensity * I.alpha;
+                
+                // Белая вспышка
+                const flashGradient = this.ctx.createRadialGradient(
+                    centerX, centerY, 0,
+                    centerX, centerY, 80 * I.size * flashIntensity
+                );
+                flashGradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                flashGradient.addColorStop(0.3, 'rgba(255, 255, 200, 0.8)');
+                flashGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                this.ctx.fillStyle = flashGradient;
                 this.ctx.beginPath();
-                this.ctx.arc(x, y, 2.2 * I.size, 0, Math.PI * 2);
+                this.ctx.arc(centerX, centerY, 80 * I.size * flashIntensity, 0, Math.PI * 2);
                 this.ctx.fill();
-
-                // Tail flame
-                this.drawRadialGlow(x, y + 6, 10 * I.size, 'rgba(255,180,80,1)', 0.55 * glow * I.alpha);
-                this.drawRadialGlow(x, y + 12, 16 * I.size, 'rgba(255,120,40,1)', 0.35 * glow * I.alpha);
-
-                // Spark trail
-                const sparks = 14;
-                for (let i = 0; i < sparks; i++) {
-                    const ang = Math.PI + (i / sparks) * 0.6 - 0.3;
-                    const dist = 8 + i * 1.7;
-                    const sx = x + Math.cos(ang) * dist;
-                    const sy = y + Math.sin(ang) * dist + i * 1.6;
-                    this.ctx.globalAlpha = (0.5 - i / sparks * 0.5) * I.alpha;
-                    this.ctx.fillStyle = 'rgba(255,220,150,1)';
-                    this.ctx.beginPath();
-                    this.ctx.arc(sx, sy, Math.max(0.6, 1.2 - i * 0.05) * I.size, 0, Math.PI * 2);
-                    this.ctx.fill();
-                }
-
-                // Smoke puffs along trail
-                for (let i = 0; i < 3; i++) {
-                    const f = i / 3;
-                    this.drawSmokePuff(x + this.noise11(currentTime * 0.5, seed + i) * 4,
-                                       y + 10 + f * 20,
-                                       10 + 14 * f,
-                                       0.15 * (1 - t) * I.alpha);
-                }
-                continue;
             }
-
-            // Burst center
-            const cx = targetX;
-            const cy = targetY;
-
-            // Explosion flash on burst start
-            if (phase < 0.38) {
-                const f = (0.38 - phase) / 0.03; // 0..1 shortly
-                this.drawRadialGlow(cx, cy, 48 * I.size, 'rgba(255,255,255,1)', 0.6 * f * I.alpha);
-                this.drawRadialGlow(cx, cy, 90 * I.size, 'rgba(255,200,120,1)', 0.35 * f * I.alpha);
-            }
-
-            // Choose firework style deterministically per shell
-            const type = seed % 5; // 0: Peony, 1: Chrysanthemum, 2: Willow, 3: Palm, 4: Crackle
-            const particleCount = Math.max(60, Math.round(120 * I.count));
-            const life = isBurst ? (phase - 0.35) / 0.3 : (phase - 0.65) / 0.35; // 0..1 within each stage
-
-            for (let p = 0; p < particleCount; p++) {
-                const a0 = (p / particleCount) * Math.PI * 2;
-                const jitter = this.noise11(currentTime * 0.6, seed + p * 17) * 0.25;
-                let ang = a0 + jitter;
-
-                // Polar speed profile by type
-                let v0;
-                if (type === 2) { // Willow - slower with gravity droop
-                    v0 = 120 + 40 * this.noise01(0, seed + p);
-                } else if (type === 3) { // Palm - emphasize vertical streaks
-                    ang = Math.round(ang / (Math.PI / 6)) * (Math.PI / 6);
-                    v0 = 160 + 60 * this.noise01(0, seed + p);
-                } else {
-                    v0 = 140 + 60 * this.noise01(0, seed + p);
-                }
-
-                // Radial distance over time with decay
-                const decay = 0.92;
-                const speed = v0 * Math.pow(decay, (isBurst ? life : (0.3 + life)) * 60);
-                const r = speed * (isBurst ? life : (0.3 + life));
-
-                // Gravity droop for willow and general arc
-                const gy = (type === 2 ? 220 : 150) * (isBurst ? life * life : (0.3 + life) * (0.3 + life));
-                const x = cx + Math.cos(ang) * r;
-                const y = cy + Math.sin(ang) * r + gy;
-                if (y > h + 60) continue;
-
-                // Color selection
-                const palettes = [
-                    [45, 60, 75],     // gold range
-                    [10, 20, 30],     // orange-red
-                    [200, 260, 300],  // blue-purple
-                    [100, 120, 140],  // green
-                    [0, 45, 60]       // crackle: warm
+            
+            if (fireworkLife >= 0.1 && fireworkLife < 2.5) {
+                // Искры салюта
+                const sparkLife = (fireworkLife - 0.1) / 2.4;
+                const sparkCount = Math.max(30, Math.round(80 * I.count));
+                
+                // Случайный размер взрыва - от обычного до 10x больше
+                const explosionSizeMultiplier = 1 + (seed % 100) / 10; // 1 до 10.9
+                
+                // Цвета для разных салютов
+                const colors = [
+                    ['#FF6B6B', '#FF8E53', '#FF6B9D'], // Красно-розовый
+                    ['#4ECDC4', '#45B7D1', '#96CEB4'], // Сине-зеленый
+                    ['#FECA57', '#FF9FF3', '#54A0FF'], // Желто-фиолетовый
+                    ['#5F27CD', '#00D2D3', '#FF9F43'], // Фиолетово-оранжевый
+                    ['#FF3838', '#FFD93D', '#6BCF7F']  // Красно-желто-зеленый
                 ];
-                const hues = palettes[type];
-                const hue = hues[(p + seed) % hues.length] + this.noise11(0, p) * 15;
-                const sat = 80 + this.noise01(0, p) * 20;
-                const lum = 50 + this.noise01(0, seed + p) * 40;
-
-                // Alpha by stage
-                const stageLife = isBurst ? (1 - life) : (1 - life) * 0.8;
-                const alpha = Math.max(0, stageLife) * (0.8 + 0.2 * this.noise01(currentTime * 3, p));
-                const size = (isBurst ? 1.6 : 1.2) * (1.0 + this.noise01(0, p)) * I.size * stageLife;
-
-                // Glow + core
-                this.drawRadialGlow(x, y, size * 3.2, `hsla(${hue}, ${sat}%, ${lum}%, 1)`, 0.3 * alpha * I.alpha);
-                this.ctx.globalAlpha = alpha * I.alpha;
-                this.ctx.fillStyle = `hsla(${hue}, ${Math.min(100, sat + 15)}%, ${Math.min(90, lum + 15)}%, 1)`;
-                this.ctx.beginPath();
-                this.ctx.arc(x, y, Math.max(0.8, size), 0, Math.PI * 2);
-                this.ctx.fill();
-
-                // Trailing streaks
-                if (p % 3 === 0) {
-                    this.ctx.globalAlpha = 0.45 * alpha * I.alpha;
-                    this.ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${lum}%, 1)`;
-                    this.ctx.lineWidth = Math.max(0.6, size * 0.45);
+                const colorPalette = colors[seed % colors.length];
+                
+                for (let s = 0; s < sparkCount; s++) {
+                    const sparkSeed = seed + s * 17;
+                    const angle = (s / sparkCount) * Math.PI * 2 + this.noise11(currentTime * 0.5, sparkSeed) * 1.0; // Больше случайности
+                    
+                    // Скорость и расстояние искры с случайным размером взрыва
+                    const baseSpeed = 80 + (sparkSeed % 60);
+                    const initialSpeed = baseSpeed * explosionSizeMultiplier; // Случайная скорость
+                    const speed = initialSpeed * (1 - sparkLife * 0.7); // Замедление
+                    const distance = speed * sparkLife;
+                    
+                    // Гравитация
+                    const gravity = 50 * sparkLife * sparkLife;
+                    
+                    const sparkX = centerX + Math.cos(angle) * distance;
+                    const sparkY = centerY + Math.sin(angle) * distance + gravity;
+                    
+                    // Пропускаем искры за пределами экрана
+                    if (sparkX < -20 || sparkX > w + 20 || sparkY < -20 || sparkY > h + 20) continue;
+                    
+                    // Затухание искры
+                    const sparkAlpha = Math.max(0, 1 - sparkLife) * (0.8 + this.noise01(currentTime * 3, sparkSeed) * 0.2);
+                    const sparkSize = (2 + (sparkSeed % 3)) * I.size * (1 - sparkLife * 0.5);
+                    
+                    // Цвет искры
+                    const colorIndex = sparkSeed % colorPalette.length;
+                    const sparkColor = colorPalette[colorIndex];
+                    
+                    // Рисуем искру с свечением
+                    this.ctx.globalAlpha = sparkAlpha * 0.3 * I.alpha;
+                    const glowGradient = this.ctx.createRadialGradient(
+                        sparkX, sparkY, 0,
+                        sparkX, sparkY, sparkSize * 4
+                    );
+                    glowGradient.addColorStop(0, sparkColor + 'AA');
+                    glowGradient.addColorStop(1, sparkColor + '00');
+                    
+                    this.ctx.fillStyle = glowGradient;
                     this.ctx.beginPath();
-                    this.ctx.moveTo(x - Math.cos(ang) * 14, y - Math.sin(ang) * 14);
-                    this.ctx.lineTo(x, y);
-                    this.ctx.stroke();
-                }
-
-                // Crackle micro-sparks for type 4 near the end
-                if (type === 4 && isEmber && (p % 8 === 0)) {
-                    const m = 4;
-                    for (let k = 0; k < m; k++) {
-                        const aa = ang + this.noise11(currentTime * 2, seed + p * 31 + k) * 0.6;
-                        const rr = 6 + 10 * this.noise01(0, k + p);
-                        const mx = x + Math.cos(aa) * rr;
-                        const my = y + Math.sin(aa) * rr;
-                        this.ctx.globalAlpha = 0.5 * alpha * I.alpha;
-                        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${Math.min(90, lum + 10)}%, 1)`;
+                    this.ctx.arc(sparkX, sparkY, sparkSize * 4, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Яркое ядро искры
+                    this.ctx.globalAlpha = sparkAlpha * I.alpha;
+                    this.ctx.fillStyle = sparkColor;
+                    this.ctx.beginPath();
+                    this.ctx.arc(sparkX, sparkY, sparkSize, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // След искры
+                    if (sparkLife < 0.8 && s % 3 === 0) {
+                        this.ctx.globalAlpha = sparkAlpha * 0.5 * I.alpha;
+                        this.ctx.strokeStyle = sparkColor;
+                        this.ctx.lineWidth = Math.max(0.5, sparkSize * 0.5);
+                        this.ctx.lineCap = 'round';
+                        
+                        const trailLength = 8 + sparkSize;
                         this.ctx.beginPath();
-                        this.ctx.arc(mx, my, 0.7, 0, Math.PI * 2);
-                        this.ctx.fill();
+                        this.ctx.moveTo(sparkX, sparkY);
+                        this.ctx.lineTo(
+                            sparkX - Math.cos(angle) * trailLength,
+                            sparkY - Math.sin(angle) * trailLength + gravity * 0.3
+                        );
+                        this.ctx.stroke();
                     }
-                }
-            }
-
-            // Residual smoke cloud after burst
-            const smokeAlpha = (isEmber ? (1 - (phase - 0.65) / 0.35) : (isBurst ? 0.5 : 0)) * (0.2 + 0.3 * I.alpha);
-            if (smokeAlpha > 0.02) {
-                for (let i = 0; i < 4; i++) {
-                    this.drawSmokePuff(cx + this.noise11(currentTime * 0.2, seed + i) * 18,
-                                       cy + this.noise11(currentTime * 0.25, seed + 77 + i) * 14,
-                                       22 + i * 10,
-                                       smokeAlpha * (0.7 - i * 0.12));
                 }
             }
         }
@@ -763,7 +1159,7 @@ class VideoGenerator {
         const rotBase = 0.015; // slower base rotation speed
         const rotGain = 0.35;  // moderate difference in rotation speeds
 
-        const totalCount = Math.max(800, Math.round(((w * h) / 2500) * I.count)); // significantly more stars
+        const totalCount = Math.max(1200, Math.round(((w * h) / 2000) * I.count)); // even more stars
         const armStarRatio = 0.6; // 60% of stars in spiral arms, 40% background
         const armStarCount = Math.round(totalCount * armStarRatio);
         const backgroundStarCount = totalCount - armStarCount;
@@ -777,6 +1173,9 @@ class VideoGenerator {
         for (let i = 0; i < backgroundStarCount; i++) {
             this.drawBackgroundStar(i + armStarCount, currentTime, w, h, cx, cy, tilt, baseRadius, rotBase, rotGain, I);
         }
+        
+        // Draw occasional comets
+        this.drawComets(currentTime, w, h, I);
 
         // Subtle nebula glow from center - adjusted scale
         const nebulaGlow = this.ctx.createRadialGradient(
@@ -847,34 +1246,62 @@ class VideoGenerator {
         // Render stars across the entire visible area
         if (x < -40 || x > w + 40 || y < -40 || y > h + 40) return;
 
-        // Size based on proximity to center - slightly smaller stars
-        const baseSizeFromProximity = 0.6 + proximityFactor * 2.0; // slightly reduced base size
-        const randomSizeVariation = 0.5 + (i % 12) * 0.12; // more variation with smaller range
-        const size = Math.max(0.4, baseSizeFromProximity * randomSizeVariation * I.size * 0.9); // 10% smaller
+        // Size based on proximity to center - much bigger range (up to 2x)
+        const baseSizeFromProximity = 0.6 + proximityFactor * 2.5; // increased base size
+        const randomSizeVariation = 0.5 + (i % 20) * 0.25; // much more variation - up to 2x bigger
+        const size = Math.max(0.4, baseSizeFromProximity * randomSizeVariation * I.size * 1.2); // 20% bigger overall
 
-        // Enhanced twinkling - brighter and more dynamic
-        const twinkleSpeed = 0.8 + proximityFactor * 1.5; // faster twinkling
-        const twinkleIntensity = 0.4 + proximityFactor * 0.6; // much brighter twinkling
-        const twinkle = 0.5 + twinkleIntensity * this.noise01(currentTime * twinkleSpeed, i * 7 + radius * 0.002);
+        // Хаотичное мерцание - несколько слоев для реалистичности
+        const twinkleSpeed1 = 1.2 + proximityFactor * 2.0; // быстрое мерцание
+        const twinkleSpeed2 = 0.4 + proximityFactor * 0.8; // медленное мерцание
+        const twinkleSpeed3 = 2.5 + (i % 5) * 0.3; // индивидуальное хаотичное мерцание
+        
+        const twinkle1 = this.noise01(currentTime * twinkleSpeed1, i * 7 + radius * 0.002);
+        const twinkle2 = this.noise01(currentTime * twinkleSpeed2, i * 13 + radius * 0.001);
+        const twinkle3 = this.noise01(currentTime * twinkleSpeed3, i * 19);
+        
+        // Комбинируем разные типы мерцания для хаотичности
+        const combinedTwinkle = 0.3 + 0.4 * twinkle1 + 0.2 * twinkle2 + 0.3 * twinkle3;
+        const finalTwinkle = Math.max(0.2, Math.min(1.2, combinedTwinkle));
 
-        // Color: subtle variation, closer stars slightly warmer
+        // Color: subtle variation, closer stars slightly warmer and brighter
         const hue = Math.round(185 + proximityFactor * 35 + (i % 11) * 1.5);
-        const sat = 25 + Math.round(proximityFactor * 25);
-        const lum = 60 + Math.round(proximityFactor * 25); // brighter base luminosity
-        const alpha = twinkle * (0.6 + proximityFactor * 0.4); // brighter alpha
+        const sat = 30 + Math.round(proximityFactor * 30); // more saturated
+        const baseLum = 70 + Math.round(proximityFactor * 30); // much brighter base luminosity
+        const baseAlpha = 0.8 + proximityFactor * 0.5; // much brighter alpha
         
-        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
-
-        // Draw star with subtle cross pattern
-        this.ctx.fillRect(x - size/2, y - size/2, size, size);
+        // Применяем мерцание к яркости и прозрачности
+        const flickerLum = Math.round(baseLum * finalTwinkle);
+        const flickerAlpha = baseAlpha * finalTwinkle;
         
-        // Add subtle cross pattern for larger stars
-        if (size > 1.0) { // adjusted threshold for cross pattern
-            this.ctx.globalAlpha = alpha * 0.6; // brighter cross
-            const crossSize = size * 1.1; // cross size
-            this.ctx.fillRect(x - crossSize, y - 0.3, crossSize * 2, 0.6);
-            this.ctx.fillRect(x - 0.3, y - crossSize, 0.6, crossSize * 2);
-            this.ctx.globalAlpha = 1;
+        // Рисуем звезду как кружок с градиентом (яркий центр, мягкие края)
+        const starRadius = size;
+        const gradient = this.ctx.createRadialGradient(x, y, 0, x, y, starRadius);
+        
+        // Яркий центр
+        gradient.addColorStop(0, `hsla(${hue}, ${sat}%, ${Math.min(100, flickerLum + 20)}%, ${flickerAlpha})`);
+        // Средняя зона
+        gradient.addColorStop(0.4, `hsla(${hue}, ${sat}%, ${flickerLum}%, ${flickerAlpha * 0.8})`);
+        // Мягкие края
+        gradient.addColorStop(1, `hsla(${hue}, ${sat}%, ${Math.max(0, flickerLum - 20)}%, 0)`);
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, starRadius, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Добавляем дополнительное свечение для крупных звезд
+        if (size > 2.0) {
+            const glowRadius = starRadius * 1.8;
+            const glowGradient = this.ctx.createRadialGradient(x, y, 0, x, y, glowRadius);
+            glowGradient.addColorStop(0, `hsla(${hue}, ${sat + 10}%, ${Math.min(100, flickerLum + 30)}%, ${flickerAlpha * 0.3})`);
+            glowGradient.addColorStop(0.6, `hsla(${hue}, ${sat}%, ${flickerLum}%, ${flickerAlpha * 0.1})`);
+            glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            this.ctx.fillStyle = glowGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
+            this.ctx.fill();
         }
     }
 
@@ -911,26 +1338,217 @@ class VideoGenerator {
         // Render stars across the entire visible area
         if (x < -40 || x > w + 40 || y < -40 || y > h + 40) return;
 
-        // Background stars are generally smaller and dimmer
-        const baseSizeFromProximity = 0.4 + proximityFactor * 1.5; // smaller than arm stars
-        const randomSizeVariation = 0.4 + (i % 15) * 0.08; // more variation, smaller range
-        const size = Math.max(0.3, baseSizeFromProximity * randomSizeVariation * I.size * 0.8); // 20% smaller
+        // Background stars with bigger size range (up to 2x)
+        const baseSizeFromProximity = 0.4 + proximityFactor * 2.0; // bigger than before
+        const randomSizeVariation = 0.4 + (i % 18) * 0.20; // much more variation - up to 2x bigger
+        const size = Math.max(0.3, baseSizeFromProximity * randomSizeVariation * I.size * 1.0); // same size as before but with more variation
 
-        // Dimmer twinkling for background stars
-        const twinkleSpeed = 0.6 + proximityFactor * 1.2; // slightly slower twinkling
-        const twinkleIntensity = 0.3 + proximityFactor * 0.4; // dimmer twinkling
-        const twinkle = 0.4 + twinkleIntensity * this.noise01(currentTime * twinkleSpeed, i * 5 + radius * 0.001);
-
-        // Color: cooler colors for background stars
-        const hue = Math.round(200 + proximityFactor * 25 + (i % 13) * 1.2);
-        const sat = 20 + Math.round(proximityFactor * 20);
-        const lum = 45 + Math.round(proximityFactor * 20); // dimmer base luminosity
-        const alpha = twinkle * (0.4 + proximityFactor * 0.3); // dimmer alpha
+        // Хаотичное мерцание для фоновых звезд (более тонкое)
+        const twinkleSpeed1 = 0.8 + proximityFactor * 1.5; // умеренно быстрое мерцание
+        const twinkleSpeed2 = 0.3 + proximityFactor * 0.6; // медленное мерцание
+        const twinkleSpeed3 = 1.8 + (i % 7) * 0.2; // индивидуальное мерцание
         
-        this.ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
+        const twinkle1 = this.noise01(currentTime * twinkleSpeed1, i * 5 + radius * 0.001);
+        const twinkle2 = this.noise01(currentTime * twinkleSpeed2, i * 11 + radius * 0.0005);
+        const twinkle3 = this.noise01(currentTime * twinkleSpeed3, i * 17);
+        
+        // Более тонкое мерцание для фоновых звезд
+        const combinedTwinkle = 0.4 + 0.3 * twinkle1 + 0.2 * twinkle2 + 0.2 * twinkle3;
+        const finalTwinkle = Math.max(0.3, Math.min(1.0, combinedTwinkle));
 
-        // Draw star (no cross pattern for background stars to keep them subtle)
-        this.ctx.fillRect(x - size/2, y - size/2, size, size);
+        // Color: cooler colors for background stars but brighter
+        const hue = Math.round(200 + proximityFactor * 25 + (i % 13) * 1.2);
+        const sat = 25 + Math.round(proximityFactor * 25); // more saturated
+        const baseLum = 55 + Math.round(proximityFactor * 25); // brighter base luminosity
+        const baseAlpha = 0.6 + proximityFactor * 0.4; // brighter alpha
+        
+        // Применяем мерцание к яркости и прозрачности
+        const flickerLum = Math.round(baseLum * finalTwinkle);
+        const flickerAlpha = baseAlpha * finalTwinkle;
+        
+        // Рисуем фоновую звезду как кружок с градиентом
+        const starRadius = size;
+        const gradient = this.ctx.createRadialGradient(x, y, 0, x, y, starRadius);
+        
+        // Яркий центр (менее яркий чем у звезд в рукавах)
+        gradient.addColorStop(0, `hsla(${hue}, ${sat}%, ${Math.min(100, flickerLum + 15)}%, ${flickerAlpha})`);
+        // Средняя зона
+        gradient.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${flickerLum}%, ${flickerAlpha * 0.7})`);
+        // Мягкие края
+        gradient.addColorStop(1, `hsla(${hue}, ${sat}%, ${Math.max(0, flickerLum - 15)}%, 0)`);
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, starRadius, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+
+    drawComets(currentTime, w, h, I) {
+        // Больше комет и чаще
+        const cometCount = Math.max(2, Math.round(5 * I.count)); // 2-5 комет
+        
+        for (let i = 0; i < cometCount; i++) {
+            const cometSeed = i * 1337;
+            // Больший разброс скоростей (0.8-6.0x - от медленных до очень быстрых)
+            const cometSpeed = 0.8 + (cometSeed % 100) * 0.052;
+            const cometTime = currentTime * cometSpeed + (cometSeed % 100) * 0.05;
+            
+            // Более длинный цикл для более редких пролетов (12 секунд вместо 6)
+            const cometLifeCycle = (cometTime + (cometSeed % 40)) % 12;
+            
+            // Комета видна меньшую часть цикла (3-4 секунды из 12 - реже)
+            const visibilityStart = (cometSeed % 8); // начало от 0 до 8 секунд
+            const visibilityDuration = 3 + (cometSeed % 2); // длительность 3-4 секунды
+            
+            if (cometLifeCycle < visibilityStart || cometLifeCycle > visibilityStart + visibilityDuration) {
+                continue; // Комета не видна
+            }
+            
+            // Прогресс видимости кометы (0 - появление, 1 - исчезновение)
+            const visibilityProgress = (cometLifeCycle - visibilityStart) / visibilityDuration;
+            
+            // Кометы пролетают через экран от края до края
+            const direction = (cometSeed % 8); // 8 направлений
+            let startX, startY, endX, endY;
+            
+            // Определяем начальную и конечную точки за пределами экрана
+            switch (direction) {
+                case 0: // Слева направо
+                    startX = -100; startY = (cometSeed * 73) % h;
+                    endX = w + 100; endY = startY + ((cometSeed * 97) % 200 - 100);
+                    break;
+                case 1: // Справа налево
+                    startX = w + 100; startY = (cometSeed * 73) % h;
+                    endX = -100; endY = startY + ((cometSeed * 97) % 200 - 100);
+                    break;
+                case 2: // Сверху вниз
+                    startX = (cometSeed * 73) % w; startY = -100;
+                    endX = startX + ((cometSeed * 97) % 200 - 100); endY = h + 100;
+                    break;
+                case 3: // Снизу вверх
+                    startX = (cometSeed * 73) % w; startY = h + 100;
+                    endX = startX + ((cometSeed * 97) % 200 - 100); endY = -100;
+                    break;
+                case 4: // Диагональ: левый верх -> правый низ
+                    startX = -100; startY = -50;
+                    endX = w + 100; endY = h + 50;
+                    break;
+                case 5: // Диагональ: правый верх -> левый низ
+                    startX = w + 100; startY = -50;
+                    endX = -100; endY = h + 50;
+                    break;
+                case 6: // Диагональ: левый низ -> правый верх
+                    startX = -100; startY = h + 50;
+                    endX = w + 100; endY = -50;
+                    break;
+                case 7: // Диагональ: правый низ -> левый верх
+                    startX = w + 100; startY = h + 50;
+                    endX = -100; endY = -50;
+                    break;
+            }
+            
+            // Текущая позиция кометы
+            const x = startX + (endX - startX) * visibilityProgress;
+            const y = startY + (endY - startY) * visibilityProgress;
+            
+            // Предыдущие позиции для хвоста (короче в 2 раза)
+            const tailPoints = [];
+            for (let t = 1; t <= 4; t++) { // меньше точек
+                const prevProgress = Math.max(0, visibilityProgress - t * 0.0075); // в 2 раза меньший шаг (было 0.015)
+                const prevX = startX + (endX - startX) * prevProgress;
+                const prevY = startY + (endY - startY) * prevProgress;
+                tailPoints.push({x: prevX, y: prevY, intensity: 1 - t * 0.24}); // быстрее затухание
+            }
+            
+            this.drawComet(x, y, tailPoints, visibilityProgress, cometSeed, I);
+        }
+    }
+    
+    drawComet(x, y, tailPoints, progress, seed, I) {
+        this.ctx.save();
+        
+        // Яркость кометы - более яркая и менее зависимая от прогресса
+        const fadeIn = Math.min(1, progress * 8); // очень быстро появляется
+        const fadeOut = Math.min(1, (1 - progress) * 8); // очень быстро исчезает
+        const brightness = Math.max(0.6, Math.min(fadeIn, fadeOut)); // минимум 60% яркости
+        
+        // Размер кометы - большой разброс, уменьшенный в 2 раза
+        const cometSize = (0.25 + (seed % 100) * 0.0475) * I.size; // размер от 0.25 до 5
+        
+        // Цвет кометы - яркий голубовато-белый
+        const hue = 200 + (seed % 30);
+        const sat = 60 + (seed % 20);
+        const coreHue = 190 + (seed % 40);
+        
+        // Рисуем хвост как плавно исчезающую линию
+        if (tailPoints.length > 1) {
+            // Создаем путь для хвоста
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y); // начинаем от ядра кометы
+            
+            // Добавляем все точки хвоста
+            for (let i = 0; i < tailPoints.length; i++) {
+                this.ctx.lineTo(tailPoints[i].x, tailPoints[i].y);
+            }
+            
+            // Рисуем хвост с переменной толщиной и прозрачностью - тонкий и белый
+            const maxTailWidth = cometSize * 1.5; // тоньше в 2 раза
+            
+            // Рисуем 3 слоя хвоста для плавного исчезновения (меньше слоев)
+            for (let layer = 0; layer < 3; layer++) {
+                this.ctx.save();
+                
+                // Каждый слой тоньше и прозрачнее предыдущего
+                const layerWidth = maxTailWidth * (1 - layer * 0.25);
+                const layerAlpha = brightness * I.alpha * (1 - layer * 0.25);
+                
+                this.ctx.lineWidth = layerWidth;
+                this.ctx.lineCap = 'round';
+                this.ctx.lineJoin = 'round';
+                
+                // Создаем градиент вдоль линии для плавного исчезновения - белый
+                const gradient = this.ctx.createLinearGradient(
+                    x, y, 
+                    tailPoints[tailPoints.length - 1].x, 
+                    tailPoints[tailPoints.length - 1].y
+                );
+                
+                // Белый хвост с плавным исчезновением
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${layerAlpha})`);
+                gradient.addColorStop(0.3, `rgba(255, 255, 255, ${layerAlpha * 0.8})`);
+                gradient.addColorStop(0.7, `rgba(255, 255, 255, ${layerAlpha * 0.4})`);
+                gradient.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                
+                this.ctx.strokeStyle = gradient;
+                this.ctx.stroke();
+                
+                this.ctx.restore();
+            }
+        }
+        
+        // Рисуем ядро кометы (очень яркий центр)
+        const coreGradient = this.ctx.createRadialGradient(x, y, 0, x, y, cometSize * 3);
+        
+        coreGradient.addColorStop(0, `hsla(${coreHue}, 80%, 100%, ${brightness * I.alpha})`);
+        coreGradient.addColorStop(0.4, `hsla(${coreHue}, 70%, 90%, ${brightness * 0.9 * I.alpha})`);
+        coreGradient.addColorStop(1, `hsla(${coreHue}, 60%, 70%, 0)`);
+        
+        this.ctx.fillStyle = coreGradient;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, cometSize * 3, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Очень яркое ядро в центре
+        const nucleusGradient = this.ctx.createRadialGradient(x, y, 0, x, y, cometSize * 1.5);
+        nucleusGradient.addColorStop(0, `hsla(${coreHue + 20}, 90%, 100%, ${brightness * I.alpha})`);
+        nucleusGradient.addColorStop(1, `hsla(${coreHue}, 80%, 95%, ${brightness * 0.8 * I.alpha})`);
+        
+        this.ctx.fillStyle = nucleusGradient;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, cometSize * 1.5, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        this.ctx.restore();
     }
 
     drawRainEffect(currentTime, w, h) {
@@ -1482,6 +2100,8 @@ class VideoGenerator {
             videoFPS: document.getElementById('videoFPS'),
             videoEffect: document.getElementById('videoEffect'),
             effectIntensity: document.getElementById('effectIntensity'),
+            floatIntensity: document.getElementById('floatIntensity'),
+            floatSpeed: document.getElementById('floatSpeed'),
             // New: copyright text
             copyrightText: document.getElementById('copyrightText'),
             generateVideo: document.getElementById('generateVideo'),
@@ -1546,6 +2166,15 @@ class VideoGenerator {
             // live preview on input, and mark settings changed on change
             this.elements.effectIntensity.addEventListener('input', () => this.renderPreviewFrame(this.previewCurrentTime || 0));
             this.elements.effectIntensity.addEventListener('change', () => this.onSettingsChanged());
+        }
+        // Floating animation settings
+        if (this.elements.floatIntensity) {
+            this.elements.floatIntensity.addEventListener('input', () => this.renderPreviewFrame(this.previewCurrentTime || 0));
+            this.elements.floatIntensity.addEventListener('change', () => this.onSettingsChanged());
+        }
+        if (this.elements.floatSpeed) {
+            this.elements.floatSpeed.addEventListener('input', () => this.renderPreviewFrame(this.previewCurrentTime || 0));
+            this.elements.floatSpeed.addEventListener('change', () => this.onSettingsChanged());
         }
         // Live update preview when copyright text changes
         if (this.elements.copyrightText) {
@@ -2586,9 +3215,15 @@ class VideoGenerator {
 
         // Apply animation only if enabled
         if (isAnimated) {
-            // Very subtle and smooth scale animation
-            const scaleVariation = 0.02 * Math.sin(currentTime * 0.2);
-            currentScale = scale * (1 + scaleVariation);
+            // Get user-configurable floating settings
+            const floatIntensity = this.getFloatIntensity(); // 1, 1.5, or 2
+            const floatSpeed = this.getFloatSpeed(); // 0.5 to 2
+
+            // Enhanced scale animation with configurable intensity
+            // Only allow scaling UP to prevent black borders
+            const baseScaleVariation = 0.04 * floatIntensity; // Increased from 0.02, now 0.04 to 0.08
+            const scaleVariation = Math.abs(baseScaleVariation * Math.sin(currentTime * 0.3 * floatSpeed));
+            currentScale = scale * (1 + scaleVariation); // Always scale up from base scale
 
             const scaledWidth = img.naturalWidth * currentScale;
             const scaledHeight = img.naturalHeight * currentScale;
@@ -2597,9 +3232,24 @@ class VideoGenerator {
             const maxMoveX = Math.max(0, (scaledWidth - canvasWidth) / 2);
             const maxMoveY = Math.max(0, (scaledHeight - canvasHeight) / 2);
 
-            // Very subtle and smooth movement using different frequencies
-            moveX = maxMoveX * 0.15 * Math.sin(currentTime * 0.1);
-            moveY = maxMoveY * 0.15 * Math.cos(currentTime * 0.13);
+            // Enhanced movement with multiple wave patterns and configurable intensity
+            const baseMovementFactor = 0.25 * floatIntensity; // Increased from 0.15, now 0.25 to 0.5
+            
+            // Primary movement waves
+            const primaryX = Math.sin(currentTime * 0.15 * floatSpeed) * baseMovementFactor;
+            const primaryY = Math.cos(currentTime * 0.18 * floatSpeed) * baseMovementFactor;
+            
+            // Secondary movement waves for more complex motion
+            const secondaryX = Math.sin(currentTime * 0.08 * floatSpeed + 1.5) * baseMovementFactor * 0.6;
+            const secondaryY = Math.cos(currentTime * 0.12 * floatSpeed + 2.1) * baseMovementFactor * 0.6;
+            
+            // Tertiary subtle drift for organic feel
+            const driftX = Math.sin(currentTime * 0.05 * floatSpeed + 3.7) * baseMovementFactor * 0.3;
+            const driftY = Math.cos(currentTime * 0.06 * floatSpeed + 4.2) * baseMovementFactor * 0.3;
+
+            // Combine all movement components
+            moveX = maxMoveX * (primaryX + secondaryX + driftX);
+            moveY = maxMoveY * (primaryY + secondaryY + driftY);
         }
 
         const scaledWidth = img.naturalWidth * currentScale;
