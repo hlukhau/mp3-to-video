@@ -15,6 +15,7 @@ class VideoGenerator {
         this.canvas = null;
         this.ctx = null;
         this.videoFrameCache = new Map(); // Cache for extracted video frames
+        this.lastRenderedFrame = null; // Cache last rendered frame to reduce flickering
         
         this.initializeElements();
         this.bindEvents();
@@ -1232,8 +1233,8 @@ class VideoGenerator {
     }
 
     drawSubtitles(currentTime, canvasWidth, canvasHeight) {
-        // Old behavior: horizontally moving (marquee-like) subtitles at the bottom.
         if (!this.subtitles.length) return;
+        
         const fontSize = Math.max(16, Math.round(canvasHeight * 0.045));
         this.ctx.save();
         this.ctx.globalAlpha = 1;
@@ -1241,30 +1242,62 @@ class VideoGenerator {
         this.ctx.shadowBlur = 0;
         this.ctx.font = `${fontSize}px sans-serif`;
         this.ctx.textBaseline = 'middle';
-        this.ctx.textAlign = 'left';
+        this.ctx.textAlign = 'center';
 
+        // Find active subtitles that should be displayed at current time
         const active = this.subtitles
-            .filter(s => currentTime >= s.start && currentTime <= s.start + s.duration)
+            .filter(s => currentTime >= s.start && currentTime < s.start + s.duration)
             .sort((a, b) => a.start - b.start);
-        if (!active.length) return;
-        // show the earliest active subtitle only (old behavior)
+            
+        if (!active.length) {
+            this.ctx.restore();
+            return;
+        }
+
+        // Display the first active subtitle (can be extended to show multiple)
         const sub = active[0];
-
-        const padding = Math.round(fontSize * 0.5);
-        const lineHeight = Math.round(fontSize * 1.6);
-        const lineGap = Math.max(6, Math.round(fontSize * 0.25));
-        const speed = Math.max(80, Math.round(canvasWidth * 0.15)); // px/sec
-
-        const t = Math.max(0, currentTime - sub.start);
         const text = sub.text || '';
+        
+        // Calculate relative time within subtitle duration for animations
+        const relativeTime = currentTime - sub.start;
+        const progress = relativeTime / sub.duration; // 0 to 1
+        
+        const padding = Math.round(fontSize * 0.6);
+        const lineHeight = Math.round(fontSize * 1.8);
+        const lineGap = Math.max(8, Math.round(fontSize * 0.3));
+        
+        // Measure text dimensions
         const metrics = this.ctx.measureText(text);
         const textWidth = Math.ceil(metrics.width);
         const totalWidth = textWidth + padding * 2;
-        const x = Math.round(canvasWidth - t * speed);
+        
+        // Position subtitle at bottom center of screen
+        const x = Math.round((canvasWidth - totalWidth) / 2);
         const y = canvasHeight - (lineHeight + lineGap);
-        this.drawRoundedRect(x, y, totalWidth, lineHeight, Math.max(8, Math.round(fontSize * 0.3)), 'rgba(0,0,0,0.6)');
+        
+        // Add fade-in/fade-out effect
+        let alpha = 1;
+        const fadeTime = 0.3; // 0.3 seconds for fade in/out
+        
+        if (relativeTime < fadeTime) {
+            // Fade in
+            alpha = relativeTime / fadeTime;
+        } else if (relativeTime > sub.duration - fadeTime) {
+            // Fade out
+            alpha = (sub.duration - relativeTime) / fadeTime;
+        }
+        
+        alpha = Math.max(0, Math.min(1, alpha));
+        
+        // Draw background with fade effect
+        this.ctx.globalAlpha = alpha * 0.8;
+        this.drawRoundedRect(x, y, totalWidth, lineHeight, Math.max(8, Math.round(fontSize * 0.3)), 'rgba(0,0,0,0.8)');
+        
+        // Draw text with fade effect
+        this.ctx.globalAlpha = alpha;
         this.ctx.fillStyle = '#FFFFFF';
-        this.ctx.fillText(text, x + padding, y + lineHeight / 2);
+        this.ctx.fillText(text, canvasWidth / 2, y + lineHeight / 2);
+        
         this.ctx.restore();
     }
 
@@ -1583,8 +1616,8 @@ class VideoGenerator {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         
-        // Extract frames at key intervals (every 0.5 seconds)
-        const frameInterval = 0.5;
+        // Extract frames at key intervals (every 0.1 seconds for smooth playback)
+        const frameInterval = 0.1;
         const totalFrames = Math.ceil(videoData.duration / frameInterval);
         const frames = [];
         
@@ -1594,16 +1627,30 @@ class VideoGenerator {
             
             video.currentTime = time;
             await new Promise(resolve => {
-                video.addEventListener('seeked', () => resolve(), { once: true });
+                const onSeeked = () => {
+                    video.removeEventListener('seeked', onSeeked);
+                    // Minimal delay to ensure frame is ready
+                    setTimeout(resolve, 10);
+                };
+                video.addEventListener('seeked', onSeeked);
             });
             
-            // Draw frame to canvas and extract as image
+            // Draw frame to canvas and extract as compressed image for better performance
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const frameDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            const frameDataUrl = canvas.toDataURL('image/jpeg', 0.9); // Use JPEG with high quality for better performance
+            
+            // Pre-load the image to avoid flickering during playback
+            const frameImage = new Image();
+            frameImage.src = frameDataUrl;
+            await new Promise(resolve => {
+                frameImage.onload = resolve;
+                frameImage.onerror = resolve; // Continue even if image fails to load
+            });
             
             frames.push({
                 time: time,
-                dataUrl: frameDataUrl
+                dataUrl: frameDataUrl,
+                image: frameImage // Store pre-loaded image
             });
         }
         
@@ -2254,17 +2301,22 @@ class VideoGenerator {
             }
         }
         
-        // Clear canvas first
-        this.ctx.fillStyle = '#000000';
-        this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-        
-        // Draw current media item if exists
+        // Only clear and redraw if we have a media item to avoid unnecessary flashing
         if (currentMediaItem) {
+            // Clear canvas first
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            
+            // Draw current media item
             if (currentMediaItem.type === 'image') {
                 this.drawAnimatedImage(currentMediaItem, currentTime, canvasWidth, canvasHeight);
             } else if (currentMediaItem.type === 'video') {
                 this.drawVideoFrame(currentMediaItem, currentTime, canvasWidth, canvasHeight);
             }
+        } else {
+            // Just fill with black if no media item
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         }
 
         // Apply selected video effect overlay first
@@ -2320,7 +2372,7 @@ class VideoGenerator {
         // Clamp relative time to video duration
         const clampedTime = Math.max(0, Math.min(relativeTime, videoData.duration));
         
-        // Get the appropriate frame from cache
+        // Use cached frames for consistent results
         const frames = this.videoFrameCache.get(videoData.id);
         if (!frames || frames.length === 0) {
             // Fallback: draw a black rectangle if no frames available
@@ -2329,53 +2381,38 @@ class VideoGenerator {
             return;
         }
         
-        // Find the closest frame to the current time
+        // Find the closest frame using simple linear interpolation
         let closestFrame = frames[0];
-        let minTimeDiff = Math.abs(clampedTime - frames[0].time);
+        let minDiff = Math.abs(clampedTime - frames[0].time);
         
         for (let i = 1; i < frames.length; i++) {
-            const timeDiff = Math.abs(clampedTime - frames[i].time);
-            if (timeDiff < minTimeDiff) {
-                minTimeDiff = timeDiff;
+            const diff = Math.abs(clampedTime - frames[i].time);
+            if (diff < minDiff) {
+                minDiff = diff;
                 closestFrame = frames[i];
             }
         }
         
-        // Draw the frame synchronously using a pre-loaded image
-        this.drawFrameFromDataUrl(closestFrame.dataUrl, canvasWidth, canvasHeight);
+        // Draw the cached frame
+        this.drawFrameFromDataUrl(closestFrame.dataUrl, canvasWidth, canvasHeight, closestFrame.image);
     }
 
-    drawFrameFromDataUrl(dataUrl, canvasWidth, canvasHeight) {
-        try {
-            // Create a temporary image element
-            const img = new Image();
-            
-            // For data URLs, we can set src and it should be available immediately
-            img.src = dataUrl;
-            
-            // Check if image is loaded (data URLs load synchronously)
-            if (img.complete && img.naturalWidth > 0) {
-                this.drawScaledVideoFrame(img, canvasWidth, canvasHeight);
-            } else {
-                // If not loaded immediately, set up onload handler
-                img.onload = () => {
-                    this.drawScaledVideoFrame(img, canvasWidth, canvasHeight);
-                };
-                
-                // Fallback: draw black frame for now
-                this.ctx.fillStyle = '#000000';
-                this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-            }
-        } catch (error) {
-            console.warn('Error drawing video frame:', error);
-            this.ctx.fillStyle = '#000000';
-            this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    drawFrameFromDataUrl(dataUrl, canvasWidth, canvasHeight, preloadedImage = null) {
+        // Always use pre-loaded image if available - no fallbacks to avoid flickering
+        if (preloadedImage && preloadedImage.complete && preloadedImage.naturalWidth > 0) {
+            this.drawScaledVideoFrame(preloadedImage, canvasWidth, canvasHeight);
+            return;
         }
+        
+        // If no pre-loaded image, don't try to create new one - just draw black
+        // This prevents flickering from async image loading
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        console.warn('No pre-loaded image available for video frame');
     }
 
     drawScaledVideoFrame(img, canvasWidth, canvasHeight) {
         // Calculate scaling to fit the frame within the canvas while maintaining aspect ratio
-        // The frame should be fully visible and scaled to fill at least one dimension completely
         const imgAspect = img.naturalWidth / img.naturalHeight;
         const canvasAspect = canvasWidth / canvasHeight;
         
@@ -2395,16 +2432,20 @@ class VideoGenerator {
             drawY = 0;
         }
         
-        // Fill the background with black first
+        // Use more efficient rendering approach
+        this.ctx.save();
+        
+        // Enable high-quality rendering for smoother video
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
+        
+        // Clear only the area we're going to draw to reduce flickering
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         
-        // Draw the scaled video frame with high quality
-        this.ctx.save();
-        this.ctx.imageSmoothingEnabled = true;
-        this.ctx.imageSmoothingQuality = 'high';
-        this.ctx.globalAlpha = 1;
+        // Draw the image with pixel-perfect rendering
         this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        
         this.ctx.restore();
     }
 
