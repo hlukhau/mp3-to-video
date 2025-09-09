@@ -1534,9 +1534,9 @@ class VideoGenerator {
                         element: img,
                         width: img.naturalWidth,
                         height: img.naturalHeight,
-                        animated: true // По умолчанию включена анимация (плавание по экрану)
+                        animated: true // По умолчанию включена анимация
                     };
-                    
+
                     this.mediaItems.push(imageData);
                     this.renderMediaList();
                     this.updateTimeline();
@@ -2903,7 +2903,7 @@ class VideoGenerator {
                         timestampDisplay: this.formatTime(item.timestamp || 0),
                         width: imageEl.naturalWidth,
                         height: imageEl.naturalHeight,
-                        animated: item.animated !== false // Восстанавливаем настройку анимации (по умолчанию true)
+                        animated: item.animated !== false // Восстанавливаем настройку анимации
                     });
                 } else if (item.type === 'video') {
                     // For saved video items, restore from cached frames
@@ -2963,7 +2963,7 @@ class VideoGenerator {
                     timestampDisplay: this.formatTime(im.timestamp || 0),
                     width: imageEl.naturalWidth,
                     height: imageEl.naturalHeight,
-                    animated: im.animated !== false // Восстанавливаем настройку анимации (по умолчанию true)
+                    animated: im.animated !== false // Восстанавливаем настройку анимации
                 });
             }
         }
@@ -2986,12 +2986,12 @@ class VideoGenerator {
     async serializeMediaItem(itemData) {
         const name = itemData.name || 'media';
         const timestamp = itemData.timestamp || 0;
-        
+
         if (itemData.type === 'image') {
             const srcDataUrl = await this.imageToDataURL(itemData.element);
-            return { 
-                name, 
-                timestamp, 
+            return {
+                name,
+                timestamp,
                 type: 'image',
                 dataUrl: srcDataUrl,
                 width: itemData.width,
