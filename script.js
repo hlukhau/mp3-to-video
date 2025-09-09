@@ -2375,9 +2375,21 @@ class VideoGenerator {
         // Use cached frames for consistent results
         const frames = this.videoFrameCache.get(videoData.id);
         if (!frames || frames.length === 0) {
+            // For restored video items without frames, show warning and draw preview frame if available
+            if (videoData.isRestored && videoData.previewFrame) {
+                console.warn('No cached frames for restored video, using preview frame');
+                const img = new Image();
+                img.onload = () => {
+                    this.drawScaledVideoFrame(img, canvasWidth, canvasHeight);
+                };
+                img.src = videoData.previewFrame;
+                return;
+            }
+            
             // Fallback: draw a black rectangle if no frames available
             this.ctx.fillStyle = '#000000';
             this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            console.warn('No frames available for video:', videoData.name);
             return;
         }
         
@@ -2720,10 +2732,10 @@ class VideoGenerator {
                         height: imageEl.naturalHeight
                     });
                 } else if (item.type === 'video') {
-                    // For saved video items, we'll need to recreate the video element
-                    // Note: Video files can't be fully serialized, so we'll show a placeholder
-                    this.mediaItems.push({
-                        id: Date.now() + Math.random(),
+                    // For saved video items, restore from cached frames
+                    const videoId = Date.now() + Math.random();
+                    const videoItem = {
+                        id: videoId,
                         name: item.name || 'video',
                         src: item.previewFrame || item.dataUrl,
                         type: 'video',
@@ -2733,8 +2745,33 @@ class VideoGenerator {
                         width: item.width || 1920,
                         height: item.height || 1080,
                         previewFrame: item.previewFrame,
-                        isPlaceholder: true // Mark as placeholder since actual video file is not available
-                    });
+                        isRestored: true // Mark as restored from saved project
+                    };
+                    
+                    // Restore cached frames if available
+                    if (item.frames && Array.isArray(item.frames)) {
+                        const restoredFrames = [];
+                        for (const frameData of item.frames) {
+                            // Pre-load each frame image
+                            const frameImage = new Image();
+                            frameImage.src = frameData.dataUrl;
+                            await new Promise(resolve => {
+                                frameImage.onload = resolve;
+                                frameImage.onerror = resolve;
+                            });
+                            
+                            restoredFrames.push({
+                                time: frameData.time,
+                                dataUrl: frameData.dataUrl,
+                                image: frameImage
+                            });
+                        }
+                        
+                        // Cache the restored frames
+                        this.videoFrameCache.set(videoId, restoredFrames);
+                    }
+                    
+                    this.mediaItems.push(videoItem);
                 }
             }
         }
@@ -2786,6 +2823,13 @@ class VideoGenerator {
                 height: itemData.height
             };
         } else if (itemData.type === 'video') {
+            // For video items, save all cached frames for restoration
+            const frames = this.videoFrameCache.get(itemData.id);
+            const serializedFrames = frames ? frames.map(frame => ({
+                time: frame.time,
+                dataUrl: frame.dataUrl
+            })) : [];
+            
             return { 
                 name, 
                 timestamp, 
@@ -2793,7 +2837,8 @@ class VideoGenerator {
                 duration: itemData.duration,
                 width: itemData.width,
                 height: itemData.height,
-                previewFrame: itemData.previewFrame
+                previewFrame: itemData.previewFrame,
+                frames: serializedFrames // Save all frames for restoration
             };
         }
         
