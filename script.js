@@ -1238,11 +1238,13 @@ class VideoGenerator {
         const fontSize = Math.max(16, Math.round(canvasHeight * 0.045));
         this.ctx.save();
         this.ctx.globalAlpha = 1;
-        this.ctx.shadowColor = 'transparent';
-        this.ctx.shadowBlur = 0;
-        this.ctx.font = `${fontSize}px sans-serif`;
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+        this.ctx.shadowBlur = 4;
+        this.ctx.shadowOffsetX = 2;
+        this.ctx.shadowOffsetY = 2;
+        this.ctx.font = `bold ${fontSize}px Arial, sans-serif`;
         this.ctx.textBaseline = 'middle';
-        this.ctx.textAlign = 'center';
+        this.ctx.textAlign = 'left';
 
         // Find active subtitles that should be displayed at current time
         const active = this.subtitles
@@ -1254,30 +1256,33 @@ class VideoGenerator {
             return;
         }
 
-        // Display the first active subtitle (can be extended to show multiple)
+        // Display the first active subtitle with marquee effect
         const sub = active[0];
         const text = sub.text || '';
         
-        // Calculate relative time within subtitle duration for animations
+        // Calculate relative time within subtitle duration for movement
         const relativeTime = currentTime - sub.start;
         const progress = relativeTime / sub.duration; // 0 to 1
-        
-        const padding = Math.round(fontSize * 0.6);
-        const lineHeight = Math.round(fontSize * 1.8);
-        const lineGap = Math.max(8, Math.round(fontSize * 0.3));
         
         // Measure text dimensions
         const metrics = this.ctx.measureText(text);
         const textWidth = Math.ceil(metrics.width);
-        const totalWidth = textWidth + padding * 2;
         
-        // Position subtitle at bottom center of screen
-        const x = Math.round((canvasWidth - totalWidth) / 2);
-        const y = canvasHeight - (lineHeight + lineGap);
+        // Calculate marquee movement
+        // Text starts from right edge and moves to left edge
+        const startX = canvasWidth; // Start from right edge
+        const endX = -textWidth; // End when text completely exits left
+        const totalDistance = startX - endX;
         
-        // Add fade-in/fade-out effect
+        // Calculate current X position based on progress through subtitle duration
+        const currentX = startX - (progress * totalDistance);
+        
+        // Y position - center vertically in bottom third of screen
+        const y = canvasHeight - Math.round(canvasHeight * 0.15);
+        
+        // Add fade-in/fade-out effect for smooth appearance
         let alpha = 1;
-        const fadeTime = 0.3; // 0.3 seconds for fade in/out
+        const fadeTime = 0.2; // 0.2 seconds for fade in/out
         
         if (relativeTime < fadeTime) {
             // Fade in
@@ -1289,14 +1294,10 @@ class VideoGenerator {
         
         alpha = Math.max(0, Math.min(1, alpha));
         
-        // Draw background with fade effect
-        this.ctx.globalAlpha = alpha * 0.8;
-        this.drawRoundedRect(x, y, totalWidth, lineHeight, Math.max(8, Math.round(fontSize * 0.3)), 'rgba(0,0,0,0.8)');
-        
-        // Draw text with fade effect
+        // Draw moving text with shadow and fade effect
         this.ctx.globalAlpha = alpha;
         this.ctx.fillStyle = '#FFFFFF';
-        this.ctx.fillText(text, canvasWidth / 2, y + lineHeight / 2);
+        this.ctx.fillText(text, currentX, y);
         
         this.ctx.restore();
     }
