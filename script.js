@@ -2329,7 +2329,8 @@ class VideoGenerator {
                     element: video,
                     width: video.videoWidth,
                     height: video.videoHeight,
-                    file: file
+                    file: file,
+                    animated: false // По умолчанию видео не анимированы (на весь экран)
                 };
                 
                 // Extract frames for preview and processing
@@ -2449,13 +2450,13 @@ class VideoGenerator {
                 durationInfo = `<span class="duration-info">${this.formatTime(item.duration)}</span>`;
             }
 
-            // Animation checkbox only for images
+            // Animation checkbox for both images and videos
             let animationCheckbox = '';
-            if (item.type === 'image') {
+            if (item.type === 'image' || item.type === 'video') {
                 animationCheckbox = `
                     <label class="animation-checkbox">
                         <input type="checkbox"
-                               ${item.animated ? 'checked' : ''}
+                               ${item.animated === true ? 'checked' : ''}
                                data-id="${item.id}">
                         <span class="checkbox-label">Плыть по экрану</span>
                     </label>
@@ -2479,11 +2480,11 @@ class VideoGenerator {
                 </div>
             `;
 
-            // Добавляем обработчик для чекбокса
-            if (item.type === 'image') {
+            // Добавляем обработчик для чекбокса (для картинок и видео)
+            if (item.type === 'image' || item.type === 'video') {
                 const checkbox = mediaItem.querySelector('input[type="checkbox"]');
                 checkbox.addEventListener('change', (e) => {
-                    this.toggleImageAnimation(item.id, e.target.checked);
+                    this.toggleMediaAnimation(item.id, e.target.checked);
                 });
             }
 
@@ -2582,15 +2583,21 @@ class VideoGenerator {
         }
     }
 
-    toggleImageAnimation(itemId, animated) {
+    toggleMediaAnimation(itemId, animated) {
         const item = this.mediaItems.find(item => item.id === itemId);
-        if (item && item.type === 'image') {
+        if (item && (item.type === 'image' || item.type === 'video')) {
             item.animated = animated;
+            const mediaType = item.type === 'image' ? 'картинка' : 'видео';
             this.showNotification(
-                animated ? 'Анимация включена - картинка будет плыть по экрану' : 'Анимация отключена - картинка будет статичной',
+                animated ? `Анимация включена - ${mediaType} будет плыть по экрану` : `Анимация отключена - ${mediaType} будет статичным`,
                 'info'
             );
         }
+    }
+
+    // Оставляем старый метод для совместимости
+    toggleImageAnimation(itemId, animated) {
+        this.toggleMediaAnimation(itemId, animated);
     }
 
     handleAudioUpload(e) {
@@ -3210,7 +3217,7 @@ class VideoGenerator {
         const img = imageData.element;
 
         // Check if animation is enabled for this image
-        const isAnimated = imageData.animated !== false; // Default to true if not specified
+        const isAnimated = imageData.animated === true;
 
         // Calculate scale to fit image to canvas (cover effect)
         const scaleX = canvasWidth / img.naturalWidth;
@@ -3369,8 +3376,8 @@ class VideoGenerator {
             }
         }
         
-        // Draw the cached frame without clearing background
-        this.drawFrameFromDataUrlWithBackground(closestFrame.dataUrl, canvasWidth, canvasHeight, closestFrame.image);
+        // Draw the cached frame without clearing background, considering animation setting
+        this.drawFrameFromDataUrlWithBackground(closestFrame.dataUrl, canvasWidth, canvasHeight, closestFrame.image, videoData, currentTime);
     }
 
     drawFrameFromDataUrl(dataUrl, canvasWidth, canvasHeight, preloadedImage = null) {
@@ -3387,10 +3394,26 @@ class VideoGenerator {
         console.warn('No pre-loaded image available for video frame');
     }
 
-    drawFrameFromDataUrlWithBackground(dataUrl, canvasWidth, canvasHeight, preloadedImage = null) {
+    drawFrameFromDataUrlWithBackground(dataUrl, canvasWidth, canvasHeight, preloadedImage = null, videoData = null, currentTime = 0) {
         // Always use pre-loaded image if available - no fallbacks to avoid flickering
         if (preloadedImage && preloadedImage.complete && preloadedImage.naturalWidth > 0) {
-            this.drawScaledVideoFrameWithBackground(preloadedImage, canvasWidth, canvasHeight);
+            // Check if video animation is enabled
+            const isAnimated = videoData && videoData.animated === true;
+//            console.log('Video animation check:', {
+//                videoData: videoData ? { id: videoData.id, animated: videoData.animated } : null,
+//                isAnimated,
+//                currentTime: currentTime
+//            });
+            
+            if (isAnimated) {
+                // Draw video with floating animation like images
+//                console.log('Using animated video frame');
+                this.drawAnimatedVideoFrame(preloadedImage, videoData, currentTime, canvasWidth, canvasHeight);
+            } else {
+                // Draw video scaled to full screen (original behavior)
+//                console.log('Using static video frame');
+                this.drawScaledVideoFrameWithBackground(preloadedImage, canvasWidth, canvasHeight);
+            }
             return;
         }
         
@@ -3432,6 +3455,69 @@ class VideoGenerator {
         
         // Draw the image with pixel-perfect rendering
         this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        
+        this.ctx.restore();
+    }
+
+    drawAnimatedVideoFrame(img, videoData, currentTime, canvasWidth, canvasHeight) {
+        // Use the exact same floating animation logic as images
+//        console.log('drawAnimatedVideoFrame called:', { currentTime, videoId: videoData.id, animated: videoData.animated });
+        
+        // Calculate scale to fit video to canvas (cover effect)
+        const scaleX = canvasWidth / img.naturalWidth;
+        const scaleY = canvasHeight / img.naturalHeight;
+        const scale = Math.max(scaleX, scaleY);
+
+        let moveX = 0;
+        let moveY = 0;
+        let currentScale = scale;
+
+        // Apply animation (same logic as drawAnimatedImage)
+        // Get user-configurable floating settings
+        const floatIntensity = this.getFloatIntensity(); // 1, 1.5, or 2
+        const floatSpeed = this.getFloatSpeed(); // 0.5 to 2
+
+        // Enhanced scale animation with configurable intensity
+        // Only allow scaling UP to prevent black borders
+        const baseScaleVariation = 0.04 * floatIntensity; // Increased from 0.02, now 0.04 to 0.08
+        const scaleVariation = Math.abs(baseScaleVariation * Math.sin(currentTime * 0.3 * floatSpeed));
+        currentScale = scale * (1 + scaleVariation); // Always scale up from base scale
+
+        const scaledWidth = img.naturalWidth * currentScale;
+        const scaledHeight = img.naturalHeight * currentScale;
+
+        // Calculate movement range to keep video covering the canvas
+        const maxMoveX = Math.max(0, (scaledWidth - canvasWidth) / 2);
+        const maxMoveY = Math.max(0, (scaledHeight - canvasHeight) / 2);
+
+        // Enhanced movement with multiple wave patterns and configurable intensity
+        const baseMovementFactor = 0.25 * floatIntensity; // Increased from 0.15, now 0.25 to 0.5
+        
+        // Primary movement waves
+        const primaryX = Math.sin(currentTime * 0.15 * floatSpeed) * baseMovementFactor;
+        const primaryY = Math.cos(currentTime * 0.18 * floatSpeed) * baseMovementFactor;
+        
+        // Secondary movement waves for more complex motion
+        const secondaryX = Math.sin(currentTime * 0.08 * floatSpeed + 1.5) * baseMovementFactor * 0.6;
+        const secondaryY = Math.cos(currentTime * 0.12 * floatSpeed + 2.1) * baseMovementFactor * 0.6;
+        
+        // Tertiary subtle drift for organic feel
+        const driftX = Math.sin(currentTime * 0.05 * floatSpeed + 3.7) * baseMovementFactor * 0.3;
+        const driftY = Math.cos(currentTime * 0.06 * floatSpeed + 4.2) * baseMovementFactor * 0.3;
+
+        // Combine all movement components
+        moveX = maxMoveX * (primaryX + secondaryX + driftX);
+        moveY = maxMoveY * (primaryY + secondaryY + driftY);
+
+        const x = (canvasWidth - scaledWidth) / 2 + moveX;
+        const y = (canvasHeight - scaledHeight) / 2 + moveY;
+
+        // Draw video with smooth transitions and anti-aliasing
+        this.ctx.save();
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
+        
+        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
         
         this.ctx.restore();
     }
@@ -3740,7 +3826,7 @@ class VideoGenerator {
                         timestampDisplay: this.formatTime(item.timestamp || 0),
                         width: imageEl.naturalWidth,
                         height: imageEl.naturalHeight,
-                        animated: item.animated !== false // Восстанавливаем настройку анимации
+                        animated: item.animated // Восстанавливаем настройку анимации как есть
                     });
                 } else if (item.type === 'video') {
                     // For saved video items, restore from cached frames
@@ -3756,6 +3842,7 @@ class VideoGenerator {
                         width: item.width || 1920,
                         height: item.height || 1080,
                         previewFrame: item.previewFrame,
+                        animated: item.animated, // Восстанавливаем настройку анимации как есть
                         isRestored: true // Mark as restored from saved project
                     };
                     
@@ -3800,7 +3887,7 @@ class VideoGenerator {
                     timestampDisplay: this.formatTime(im.timestamp || 0),
                     width: imageEl.naturalWidth,
                     height: imageEl.naturalHeight,
-                    animated: im.animated !== false // Восстанавливаем настройку анимации
+                    animated: im.animated // Восстанавливаем настройку анимации как есть
                 });
             }
         }
@@ -3833,7 +3920,7 @@ class VideoGenerator {
                 dataUrl: srcDataUrl,
                 width: itemData.width,
                 height: itemData.height,
-                animated: itemData.animated !== false // Сохраняем настройку анимации
+                animated: itemData.animated // Сохраняем настройку анимации как есть
             };
         } else if (itemData.type === 'video') {
             // For video items, save all cached frames for restoration
@@ -3851,6 +3938,7 @@ class VideoGenerator {
                 width: itemData.width,
                 height: itemData.height,
                 previewFrame: itemData.previewFrame,
+                animated: itemData.animated, // Сохраняем настройку анимации как есть
                 frames: serializedFrames // Save all frames for restoration
             };
         }
