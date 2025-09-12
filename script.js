@@ -227,6 +227,11 @@ class VideoGenerator {
         return this.noise01(t, seed, freq) * 2 - 1;
     }
 
+    // Easing function for smooth subtitle movement
+    easeInOutQuad(t) {
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    }
+
     drawFilmEffect(currentTime, w, h) {
         this.ctx.save();
         const I = this.getIntensityScales();
@@ -2011,20 +2016,28 @@ class VideoGenerator {
         
         // Calculate relative time within subtitle duration for movement
         const relativeTime = currentTime - sub.start;
-        const progress = relativeTime / sub.duration; // 0 to 1
+        let progress = relativeTime / sub.duration; // 0 to 1
+        
+        // Clamp progress to valid range
+        progress = Math.max(0, Math.min(1, progress));
         
         // Measure text dimensions
         const metrics = this.ctx.measureText(text);
         const textWidth = Math.ceil(metrics.width);
         
-        // Calculate marquee movement
+        // Calculate marquee movement with constant velocity
         // Text starts from right edge and moves to left edge
         const startX = canvasWidth; // Start from right edge
         const endX = -textWidth; // End when text completely exits left
         const totalDistance = startX - endX;
         
-        // Calculate current X position based on progress through subtitle duration
-        const currentX = startX - (progress * totalDistance);
+        // Use linear interpolation for constant speed movement
+        // This eliminates jerking by ensuring consistent pixel-per-second movement
+        const pixelsPerSecond = totalDistance / sub.duration;
+        const currentX = startX - (relativeTime * pixelsPerSecond);
+        
+        // Apply sub-pixel rendering for ultra-smooth movement
+        const smoothX = Math.round(currentX * 4) / 4; // Quarter-pixel precision
         
         // Y position - center vertically in bottom third of screen
         const y = canvasHeight - Math.round(canvasHeight * 0.15);
@@ -2046,7 +2059,7 @@ class VideoGenerator {
         // Draw moving text with shadow and fade effect
         this.ctx.globalAlpha = alpha;
         this.ctx.fillStyle = '#FFFFFF';
-        this.ctx.fillText(text, currentX, y);
+        this.ctx.fillText(text, smoothX, y);
         
         this.ctx.restore();
     }
@@ -2801,6 +2814,11 @@ class VideoGenerator {
         // Invalidate any ongoing animateVideo loop
         this.activeGenerationId = (this.activeGenerationId || 0) + 1;
         
+        // Reset animation timing variables to ensure next generation starts fresh
+        this.lastFrameTime = null;
+        this.currentFrame = 0;
+        this.animationStartTime = null;
+        
         // Stop MediaRecorder if active
         if (this.currentMediaRecorder && this.currentMediaRecorder.state === 'recording') {
             this.currentMediaRecorder.stop();
@@ -3091,8 +3109,16 @@ class VideoGenerator {
             
             const frameTime = 1000 / fps;
             const totalFrames = this.videoDuration * fps;
+            // Reset frame counter and timing for fresh start
             let currentFrame = 0;
             let lastFrameTime = performance.now();
+            
+            // Store these for potential cleanup in stopGeneration
+            this.currentFrame = currentFrame;
+            this.lastFrameTime = lastFrameTime;
+            
+            // Store animation start time for smooth subtitle timing
+            this.animationStartTime = performance.now();
             
             const animate = (currentTime) => {
                 // Abort if a new generation has started or current was cancelled
@@ -3103,11 +3129,16 @@ class VideoGenerator {
                 let elapsed = currentTime - lastFrameTime;
                 let framesRendered = 0;
                 while (elapsed >= frameTime && currentFrame < totalFrames) {
+                    // Use smooth interpolated time for subtitles instead of discrete frame time
                     const videoTime = currentFrame / fps;
+                    const smoothTime = (currentTime - this.animationStartTime) / 1000; // Convert to seconds
+                    
                     const progress = (currentFrame / totalFrames) * 100;
                     this.elements.progressFill.style.width = `${progress}%`;
                     this.elements.progressPercent.textContent = `${Math.round(progress)}%`;
-                    this.renderVideoFrame(sortedMediaItems, videoTime, width, height);
+                    
+                    // Pass both discrete videoTime for media and smooth time for subtitles
+                    this.renderVideoFrame(sortedMediaItems, videoTime, width, height, smoothTime);
                     currentFrame++;
                     lastFrameTime += frameTime;
                     elapsed -= frameTime;
@@ -3128,7 +3159,7 @@ class VideoGenerator {
         });
     }
 
-    renderVideoFrame(sortedMediaItems, currentTime, canvasWidth, canvasHeight) {
+    renderVideoFrame(sortedMediaItems, currentTime, canvasWidth, canvasHeight, smoothTime = null) {
         // Find the current media item to display
         let currentMediaItem = null;
         
@@ -3208,7 +3239,9 @@ class VideoGenerator {
         // Apply selected video effect overlay first
         this.drawEffect(currentTime, canvasWidth, canvasHeight);
         // Then draw subtitles on top so text is not obscured by effects
-        this.drawSubtitles(currentTime, canvasWidth, canvasHeight);
+        // Use smooth time for subtitles if available, otherwise fall back to currentTime
+        const subtitleTime = smoothTime !== null ? smoothTime : currentTime;
+        this.drawSubtitles(subtitleTime, canvasWidth, canvasHeight);
         // Finally, draw copyright overlay in bottom-right
         this.drawCopyrightOverlay(canvasWidth, canvasHeight);
     }
