@@ -2015,29 +2015,25 @@ class VideoGenerator {
         const text = sub.text || '';
         
         // Calculate relative time within subtitle duration for movement
-        const relativeTime = currentTime - sub.start;
-        let progress = relativeTime / sub.duration; // 0 to 1
-        
-        // Clamp progress to valid range
-        progress = Math.max(0, Math.min(1, progress));
+        const relativeTime = Math.max(0, currentTime - sub.start);
         
         // Measure text dimensions
         const metrics = this.ctx.measureText(text);
         const textWidth = Math.ceil(metrics.width);
         
-        // Calculate marquee movement with constant velocity
+        // Calculate marquee movement with ultra-smooth interpolation
         // Text starts from right edge and moves to left edge
         const startX = canvasWidth; // Start from right edge
         const endX = -textWidth; // End when text completely exits left
         const totalDistance = startX - endX;
         
-        // Use linear interpolation for constant speed movement
-        // This eliminates jerking by ensuring consistent pixel-per-second movement
+        // Use high-precision time-based movement for perfect smoothness
         const pixelsPerSecond = totalDistance / sub.duration;
-        const currentX = startX - (relativeTime * pixelsPerSecond);
+        const rawX = startX - (relativeTime * pixelsPerSecond);
         
-        // Apply sub-pixel rendering for ultra-smooth movement
-        const smoothX = Math.round(currentX * 4) / 4; // Quarter-pixel precision
+        // Apply advanced smoothing with micro-pixel precision
+        // Use higher precision (16x) and then round for ultra-smooth movement
+        const smoothX = Math.round(rawX * 16) / 16;
         
         // Y position - center vertically in bottom third of screen
         const y = canvasHeight - Math.round(canvasHeight * 0.15);
@@ -2814,10 +2810,22 @@ class VideoGenerator {
         // Invalidate any ongoing animateVideo loop
         this.activeGenerationId = (this.activeGenerationId || 0) + 1;
         
-        // Reset animation timing variables to ensure next generation starts fresh
+        // Reset ALL animation timing variables to ensure next generation starts fresh
         this.lastFrameTime = null;
         this.currentFrame = 0;
         this.animationStartTime = null;
+        
+        // Reset progress display
+        if (this.elements.progressFill) this.elements.progressFill.style.width = '0%';
+        if (this.elements.progressPercent) this.elements.progressPercent.textContent = '0%';
+        
+        console.log('Generation stopped - all timing variables reset');
+        
+        // Clean up audio event listeners
+        if (this.currentAudioCleanup) {
+            this.currentAudioCleanup();
+            this.currentAudioCleanup = null;
+        }
         
         // Stop MediaRecorder if active
         if (this.currentMediaRecorder && this.currentMediaRecorder.state === 'recording') {
@@ -3014,18 +3022,36 @@ class VideoGenerator {
             
             // Start audio playback for recording if available
             if (this.audioFile && this.elements.audioElement.src) {
-                this.elements.audioElement.currentTime = 0;
-                this.elements.audioElement.loop = false; // Do not loop; let silence after end
-                console.log(`Audio duration: ${this.elements.audioElement.duration}s, Video duration: ${this.videoDuration}s`);
-                
-                // Add event listeners to monitor audio playback
-                this.elements.audioElement.addEventListener('pause', () => {
-                    console.log('Audio paused unexpectedly during recording');
-                });
-                
-                this.elements.audioElement.play().catch(error => {
-                    console.error('Audio playback failed:', error);
-                });
+                try {
+                    this.elements.audioElement.currentTime = 0;
+                    this.elements.audioElement.loop = false; // Do not loop; let silence after end
+                    console.log(`Audio duration: ${this.elements.audioElement.duration}s, Video duration: ${this.videoDuration}s`);
+                    
+                    // Only add audio monitoring for debugging, don't let it interfere with generation
+                    const audioPauseHandler = () => {
+                        const currentAudioTime = this.elements.audioElement.currentTime;
+                        const audioDuration = this.elements.audioElement.duration;
+                        console.log(`Audio event: paused at ${currentAudioTime.toFixed(2)}s (duration: ${audioDuration.toFixed(2)}s)`);
+                        // Don't take any action that could stop generation
+                    };
+                    
+                    this.elements.audioElement.addEventListener('pause', audioPauseHandler);
+                    
+                    // Clean up event listener when generation completes
+                    const cleanup = () => {
+                        this.elements.audioElement.removeEventListener('pause', audioPauseHandler);
+                    };
+                    
+                    // Store cleanup function for later use
+                    this.currentAudioCleanup = cleanup;
+                    
+                    // Try to play audio, but don't let failure stop video generation
+                    await this.elements.audioElement.play().catch(error => {
+                        console.log('Audio playback failed (continuing without audio):', error.message);
+                    });
+                } catch (error) {
+                    console.log('Audio setup failed (continuing without audio):', error.message);
+                }
             }
             
             // Animate and record
@@ -3033,17 +3059,15 @@ class VideoGenerator {
             
             // Add delay to ensure all frames are captured before stopping
             console.log('Animation completed, waiting for final frames...');
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay
+            await new Promise(resolve => setTimeout(resolve, 500)); // Shorter delay
             
-            // Additional check: ensure we've recorded for the full duration
+            // Log actual recording duration for debugging
             const recordingDuration = (performance.now() - recordingStartTime) / 1000;
             console.log(`Actual recording duration: ${recordingDuration.toFixed(2)}s`);
+            console.log(`Expected duration: ${this.videoDuration}s`);
             
-            if (recordingDuration < this.videoDuration) {
-                const additionalWait = (this.videoDuration - recordingDuration + 0.5) * 1000;
-                console.log(`Waiting additional ${additionalWait}ms to reach full duration`);
-                await new Promise(resolve => setTimeout(resolve, additionalWait));
-            }
+            // Don't try to compensate with additional waiting - if animation completed correctly,
+            // the recording should be the right duration
             
             // Stop recording
             console.log('Stopping MediaRecorder...');
@@ -3119,6 +3143,7 @@ class VideoGenerator {
             
             // Store animation start time for smooth subtitle timing
             this.animationStartTime = performance.now();
+            console.log(`Starting new generation - Duration: ${this.videoDuration}s, Total frames: ${totalFrames}, FPS: ${fps}`);
             
             const animate = (currentTime) => {
                 // Abort if a new generation has started or current was cancelled
@@ -3131,7 +3156,17 @@ class VideoGenerator {
                 while (elapsed >= frameTime && currentFrame < totalFrames) {
                     // Use smooth interpolated time for subtitles instead of discrete frame time
                     const videoTime = currentFrame / fps;
-                    const smoothTime = (currentTime - this.animationStartTime) / 1000; // Convert to seconds
+                    // Calculate smooth time with proper bounds checking
+                    let smoothTime = videoTime; // Default to discrete time
+                    if (this.animationStartTime) {
+                        const elapsedTime = (currentTime - this.animationStartTime) / 1000;
+                        // Clamp smooth time to not exceed video duration and stay close to videoTime
+                        smoothTime = Math.min(elapsedTime, this.videoDuration);
+                        // If smooth time is too far from videoTime, use videoTime instead
+                        if (Math.abs(smoothTime - videoTime) > 1.0) {
+                            smoothTime = videoTime;
+                        }
+                    }
                     
                     const progress = (currentFrame / totalFrames) * 100;
                     this.elements.progressFill.style.width = `${progress}%`;
@@ -3143,6 +3178,12 @@ class VideoGenerator {
                     lastFrameTime += frameTime;
                     elapsed -= frameTime;
                     framesRendered++;
+                    
+                    // Debug logging every 5 seconds
+                    if (currentFrame % (fps * 5) === 0) {
+                        console.log(`Progress: ${currentFrame}/${totalFrames} frames (${(videoTime).toFixed(1)}s/${this.videoDuration}s)`);
+                    }
+                    
                     // Safety: avoid rendering too many catch-up frames in a single RAF
                     if (framesRendered > 5) break;
                 }
@@ -3150,6 +3191,8 @@ class VideoGenerator {
                 if (currentFrame < totalFrames) {
                     requestAnimationFrame(animate);
                 } else {
+                    console.log(`Generation completed - Final frame: ${currentFrame}/${totalFrames}`);
+                    console.log(`Final video time: ${(currentFrame / fps).toFixed(2)}s`);
                     // Add extra frames to ensure complete recording
                     setTimeout(() => resolve(), 200);
                 }
